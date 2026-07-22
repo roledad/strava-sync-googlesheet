@@ -107,7 +107,7 @@ def build_row(detail: dict, gear: dict | None) -> list:
     avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
 
     elevation_gain_ft = detail.get("total_elevation_gain")
-    elevation_gain_m = round(elevation_gain_m / 3.28084, 1) if elevation_gain_m is not None else None
+    elevation_gain_m = round(elevation_gain_ft / 3.28084, 1) if elevation_gain_ft is not None else None
 
     # start_date_local looks like "2026-07-21T07:41:26Z" -- the "Z" is
     # misleading (Strava uses it here to mean local wall-clock time, not UTC)

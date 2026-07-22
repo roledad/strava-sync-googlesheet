@@ -36,12 +36,11 @@ WORKSHEET_TITLE = "Activities"
 HEADER = [
     "activity_id", "date", "name", "sport_type", "description",
     "distance_km", "distance_mi", "moving_time_min", "elapsed_time_min",
-    "elevation_gain_m", "avg_speed_kmh", "max_speed_kmh", "avg_pace_min_per_km",
-    "calories", "avg_cadence", "kudos_count", "achievement_count", "pr_count",
+    "elevation_gain_m", "avg_pace_min_per_km", "avg_pace_min_per_mi",
+    "calories", "avg_cadence",
     "has_heartrate", "avg_heartrate", "max_heartrate",
-    "has_device_watts", "avg_watts", "suffer_score",
-    "gear_brand", "gear_model", "gear_name",
-    "raw_json",
+    "avg_watts", "suffer_score",
+    "gear_brand", "gear_model",
 ]
 
 
@@ -104,7 +103,8 @@ def build_row(detail: dict, gear: dict | None) -> list:
 
     distance_km = round(distance_m / 1000, 3)
     distance_mi = round(distance_m / 1609.34, 3)
-    avg_pace = round((1000 / avg_speed) / 60, 2) if avg_speed else None
+    avg_pace_km = round((1000 / avg_speed) / 60, 2) if avg_speed else None
+    avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
 
     return [
         detail.get("id"),
@@ -117,24 +117,17 @@ def build_row(detail: dict, gear: dict | None) -> list:
         round((detail.get("moving_time", 0) or 0) / 60, 2),
         round((detail.get("elapsed_time", 0) or 0) / 60, 2),
         detail.get("total_elevation_gain"),
-        round(avg_speed * 3.6, 2) if avg_speed else None,
-        round((detail.get("max_speed", 0) or 0) * 3.6, 2),
-        avg_pace,
+        avg_pace_km,
+        avg_pace_mi,
         detail.get("calories"),
         detail.get("average_cadence"),
-        detail.get("kudos_count"),
-        detail.get("achievement_count"),
-        detail.get("pr_count"),
         detail.get("has_heartrate"),
         detail.get("average_heartrate"),
         detail.get("max_heartrate"),
-        bool(detail.get("device_watts")),
         detail.get("average_watts"),
         detail.get("suffer_score"),
         (gear or {}).get("brand_name"),
         (gear or {}).get("model_name"),
-        (gear or {}).get("name"),
-        json.dumps({"activity": detail, "gear": gear}, separators=(",", ":"), default=str),
     ]
 
 
@@ -146,17 +139,35 @@ def get_sheets_client():
 
 
 def get_or_create_sheet(gc):
+    """
+    Returns (spreadsheet, worksheet). Note: service accounts have 0 bytes of
+    their own Drive storage, so gc.create() fails with a quota error on
+    personal Gmail accounts. GOOGLE_SHEET_ID should normally be set, pointing
+    at a sheet you created yourself and shared with the service account's
+    client_email as Editor -- see SETUP_INSTRUCTIONS.md step 5. The gc.create()
+    fallback below only works on Google Workspace accounts with Drive quota
+    granted to service accounts.
+    """
     sheet_id = os.environ.get("GOOGLE_SHEET_ID")
     if sheet_id:
-        return gc.open_by_key(sheet_id), False
+        sh = gc.open_by_key(sheet_id)
+    else:
+        owner_email = os.environ.get("SHEET_OWNER_EMAIL", "qrui0726@gmail.com")
+        sh = gc.create(SHEET_TITLE)
+        sh.share(owner_email, perm_type="user", role="writer")
+        print(f"Created new sheet: {sh.url}")
+        print(f"IMPORTANT: save this as the GOOGLE_SHEET_ID secret for future runs: {sh.id}")
 
-    owner_email = os.environ.get("SHEET_OWNER_EMAIL", "qrui0726@gmail.com")
-    sh = gc.create(SHEET_TITLE)
-    sh.share(owner_email, perm_type="user", role="writer")
-    ws = sh.sheet1
-    ws.update_title(WORKSHEET_TITLE)
-    ws.append_row(HEADER)
-    return sh, True
+    try:
+        ws = sh.worksheet(WORKSHEET_TITLE)
+    except gspread.WorksheetNotFound:
+        ws = sh.sheet1
+        ws.update_title(WORKSHEET_TITLE)
+
+    if not ws.row_values(1):
+        ws.append_row(HEADER)
+
+    return sh, ws
 
 
 def main():
@@ -166,12 +177,7 @@ def main():
     activities = fetch_recent_activities(token, lookback_days)
 
     gc = get_sheets_client()
-    sh, created = get_or_create_sheet(gc)
-    ws = sh.worksheet(WORKSHEET_TITLE)
-
-    if created:
-        print(f"Created new sheet: {sh.url}")
-        print(f"IMPORTANT: save this as the GOOGLE_SHEET_ID secret for future runs: {sh.id}")
+    sh, ws = get_or_create_sheet(gc)
 
     existing_ids = set(ws.col_values(1)[1:])  # skip header
 

@@ -2,8 +2,12 @@ name: Strava to Google Sheets Sync
 
 on:
   schedule:
-    # Runs daily at 12:00 UTC. Edit the cron expression to change the time.
-    - cron: "0 12 * * *"
+    # GitHub Actions cron is UTC-only and doesn't follow DST, so two triggers
+    # are set for 10pm New York time year-round. Only one is "correct" on any
+    # given day; the other fires at 9pm or 11pm ET and just finds nothing new
+    # to sync (the dedup logic makes double-firing harmless).
+    - cron: "0 2 * * *"  # 10:00pm EDT (UTC-4, roughly mid-Mar to early Nov)
+    - cron: "0 3 * * *"  # 10:00pm EST (UTC-5, roughly early Nov to mid-Mar)
   workflow_dispatch: {}  # lets you trigger it manually from the Actions tab
 
 jobs:

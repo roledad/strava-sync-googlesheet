@@ -34,9 +34,9 @@ SHEET_TITLE = "Strava Activity Log"
 WORKSHEET_TITLE = "Activities"
 
 HEADER = [
-    "activity_id", "date", "name", "sport_type", "description",
+    "activity_id", "date", "time", "name", "sport_type", "description",
     "distance_km", "distance_mi", "moving_time_min", "elapsed_time_min",
-    "elevation_gain_m", "avg_pace_min_per_km", "avg_pace_min_per_mi",
+    "elevation_gain_m", "elevation_gain_ft", "avg_pace_min_per_km", "avg_pace_min_per_mi",
     "calories", "avg_cadence",
     "has_heartrate", "avg_heartrate", "max_heartrate",
     "avg_watts", "suffer_score",
@@ -106,9 +106,22 @@ def build_row(detail: dict, gear: dict | None) -> list:
     avg_pace_km = round((1000 / avg_speed) / 60, 2) if avg_speed else None
     avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
 
+    elevation_gain_m = detail.get("total_elevation_gain")
+    elevation_gain_ft = round(elevation_gain_m * 3.28084, 1) if elevation_gain_m is not None else None
+
+    # start_date_local looks like "2026-07-21T07:41:26Z" -- the "Z" is
+    # misleading (Strava uses it here to mean local wall-clock time, not UTC)
+    start_local = detail.get("start_date_local") or ""
+    if "T" in start_local:
+        date_part, time_part = start_local.split("T", 1)
+        time_part = time_part.rstrip("Z")
+    else:
+        date_part, time_part = start_local, ""
+
     return [
         detail.get("id"),
-        detail.get("start_date_local"),
+        date_part,
+        time_part,
         detail.get("name"),
         detail.get("sport_type") or detail.get("type"),
         detail.get("description", "") or "",
@@ -116,7 +129,8 @@ def build_row(detail: dict, gear: dict | None) -> list:
         distance_mi,
         round((detail.get("moving_time", 0) or 0) / 60, 2),
         round((detail.get("elapsed_time", 0) or 0) / 60, 2),
-        detail.get("total_elevation_gain"),
+        elevation_gain_m,
+        elevation_gain_ft,
         avg_pace_km,
         avg_pace_mi,
         detail.get("calories"),

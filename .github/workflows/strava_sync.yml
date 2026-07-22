@@ -7,7 +7,7 @@ on:
     # given day; the other fires at 9pm or 11pm ET and just finds nothing new
     # to sync (the dedup logic makes double-firing harmless).
     - cron: "0 2 * * *"  # 10:00pm EDT (UTC-4, roughly mid-Mar to early Nov)
-    - cron: "0 3 * * *"  # 10:00pm EST (UTC-5, roughly early Nov to mid-Mar)
+    - cron: "0 12 * * *"  # 8:00am EDT (UTC-4, roughly mid-Mar to early Nov)
   workflow_dispatch: {}  # lets you trigger it manually from the Actions tab
 
 jobs:

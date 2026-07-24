@@ -15,6 +15,9 @@ Requires these environment variables:
     LOOKBACK_DAYS              (optional, default 3 -- how far back to check
                                  for activities; dedup against the sheet means
                                  overlap is harmless)
+    SLACK_WEBHOOK_URL          (optional -- if set, posts a summary message to
+                                 that Slack Incoming Webhook whenever new
+                                 activities are synced; skipped on no-op runs)
 
 Install deps: pip install requests gspread google-auth
 """
@@ -106,6 +109,7 @@ def build_row(detail: dict, gear: dict | None) -> list:
     avg_pace_km = round((1000 / avg_speed) / 60, 2) if avg_speed else None
     avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
 
+    # Strava's API returns total_elevation_gain in feet
     elevation_gain_ft = detail.get("total_elevation_gain")
     elevation_gain_m = round(elevation_gain_ft / 3.28084, 1) if elevation_gain_ft is not None else None
 
@@ -143,6 +147,34 @@ def build_row(detail: dict, gear: dict | None) -> list:
         (gear or {}).get("brand_name"),
         (gear or {}).get("model_name"),
     ]
+
+
+def notify_slack(rows: list, sheet_url: str):
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    if not webhook_url or not rows:
+        return
+
+    lines = []
+    for row in rows:
+        d = dict(zip(HEADER, row))
+        bits = [d.get("sport_type") or "Activity"]
+        if d.get("distance_mi"):
+            bits.append(f"{d['distance_mi']} mi")
+        if d.get("moving_time_min"):
+            bits.append(f"{d['moving_time_min']} min")
+        lines.append(f"• *{d.get('name') or 'Untitled'}* ({', '.join(bits)})")
+
+    text = (
+        f":runner: *Strava sync*: {len(rows)} new activity(ies) added to "
+        f"<{sheet_url}|Strava Activity Log>\n" + "\n".join(lines)
+    )
+
+    try:
+        resp = requests.post(webhook_url, json={"text": text}, timeout=15)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        # Don't fail the whole sync just because the Slack ping didn't land
+        print(f"Slack notification failed: {e}")
 
 
 def get_sheets_client():
@@ -208,6 +240,7 @@ def main():
     if rows:
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         print(f"Synced {len(rows)} new activity(ies) to {sh.url}")
+        notify_slack(rows, sh.url)
     else:
         print("No new activities to sync.")
 

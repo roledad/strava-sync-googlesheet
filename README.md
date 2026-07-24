@@ -49,7 +49,20 @@ service account create the sheet itself fails on personal Gmail accounts with
    `strava-sync@your-project.iam.gserviceaccount.com`) — give it **Editor** access
 3. Copy the sheet's ID from its URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
 
-### 5. Create a GitHub repo and add secrets
+### 5. (Optional) Create a Slack Incoming Webhook for notifications
+Only needed if you want a Slack message posted whenever new activities are
+synced (skipped on no-op runs, so no spam from the multiple daily checks).
+
+1. Go to https://api.slack.com/apps → "Create New App" → "From scratch"
+2. Name it anything, pick your workspace
+3. Left sidebar → "Incoming Webhooks" → toggle it on → "Add New Webhook to Workspace"
+4. Pick the channel you want notifications in, authorize it
+5. Copy the webhook URL it gives you (looks like `https://hooks.slack.com/services/...`)
+
+Skip this whole step if you don't want Slack notifications — the script just
+won't send anything if `SLACK_WEBHOOK_URL` isn't set.
+
+### 6. Create a GitHub repo and add secrets
 - Create a new **private** GitHub repo
 - Push `strava_to_sheets.py` and `.github/workflows/strava_sync.yml` to it
   (the workflow file must stay at the repo root under `.github/workflows/`)
@@ -59,8 +72,9 @@ service account create the sheet itself fails on personal Gmail accounts with
   - `STRAVA_REFRESH_TOKEN`
   - `GOOGLE_SERVICE_ACCOUNT_JSON` — the entire contents of `service_account.json`, as one blob
   - `GOOGLE_SHEET_ID` — the sheet ID from step 4
+  - `SLACK_WEBHOOK_URL` — (optional) the webhook URL from step 5
 
-### 6. Bootstrap and verify
+### 7. Bootstrap and verify
 Run once locally to confirm everything's wired up correctly:
 ```
 pip install requests gspread google-auth
@@ -85,6 +99,10 @@ day.
   already synced, so re-running or double-firing is harmless
 - For genuinely new activities, fetches full detail + gear info and appends
   one row per activity
+- If `SLACK_WEBHOOK_URL` is set and at least one new activity was synced,
+  posts a summary message to that Slack channel (name, sport type, distance,
+  time, and a link to the sheet). Silent on no-op runs, and a failed Slack
+  post won't fail the sync itself.
 
 ## Sheet columns
 `activity_id, date, time, name, sport_type, description, distance_km,

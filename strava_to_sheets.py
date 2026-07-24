@@ -33,8 +33,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 STRAVA_API = "https://www.strava.com/api/v3"
-SHEET_TITLE = "Strava Activity Log"
-WORKSHEET_TITLE = "Activities"
+SHEET_TITLE = "NYCM Log"
+WORKSHEET_TITLE = "STRAVA"
 
 HEADER = [
     "activity_id", "date", "time", "name", "sport_type", "description",

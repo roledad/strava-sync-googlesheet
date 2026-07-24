@@ -173,7 +173,7 @@ def ms_to_hours(ms):
 
 
 def build_row(cycle: dict, recovery: dict | None, sleep: dict | None) -> list:
-    date_part = local_date(cycle.get("start", ""), cycle.get("timezone_offset", "+00:00"))
+    date_part = local_date(cycle.get("created_at", ""), cycle.get("timezone_offset", "+00:00"))
 
     cscore = cycle.get("score") or {}
     kilojoule = cscore.get("kilojoule")
@@ -243,7 +243,7 @@ def notify_slack(rows: list, sheet_url: str):
 
 
 def main():
-    lookback_days = int(os.environ.get("LOOKBACK_DAYS", "3"))
+    lookback_days = int(os.environ.get("LOOKBACK_DAYS", "5"))
 
     gc = get_sheets_client()
     sh = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
@@ -258,7 +258,7 @@ def main():
 
     rows = []
     for cycle in cycles:
-        if cycle.get("score_state") != "SCORED":
+        if cycle.get("end") is None:
             continue  # today's in-progress cycle, or one WHOOP hasn't scored yet
         cid = str(cycle["id"])
         if cid in existing_ids:

@@ -19,6 +19,15 @@ Requires these environment variables:
                                  that Slack Incoming Webhook whenever new
                                  activities are synced; skipped on no-op runs)
 
+For every newly-synced activity with sport_type exactly "Run", also fetches
+GET /activities/{id}/laps and writes one row per lap to a separate
+"Running details" tab in the same sheet, keyed by activity_id and date. Laps
+are only fetched for activities being synced for the first time in a given
+run -- they piggyback on the same new-activity dedup as the main Activities
+tab, so there's no separate dedup logic needed here. To backfill lap data for
+activities that were already synced before this feature existed, use
+backfill_laps.py instead.
+
 Install deps: pip install requests gspread google-auth
 """
 
@@ -35,6 +44,7 @@ from google.oauth2.service_account import Credentials
 STRAVA_API = "https://www.strava.com/api/v3"
 SHEET_TITLE = "NYCM Log"
 WORKSHEET_TITLE = "STRAVA"
+LAPS_WORKSHEET_TITLE = "Details"
 
 HEADER = [
     "activity_id", "date", "time", "name", "sport_type", "description",
@@ -44,6 +54,14 @@ HEADER = [
     "has_heartrate", "avg_heartrate", "max_heartrate",
     "avg_watts", "suffer_score",
     "gear_brand", "gear_model",
+]
+
+LAPS_HEADER = [
+    "activity_id", "date", "lap_index", "lap_name",
+    "distance_km", "distance_mi", "moving_time_min", "elapsed_time_min",
+    "elevation_gain_m", "elevation_gain_ft",
+    "avg_pace_min_per_km", "avg_pace_min_per_mi",
+    "avg_heartrate", "max_heartrate", "avg_cadence", "avg_watts",
 ]
 
 
@@ -100,6 +118,52 @@ def fetch_gear(gear_id, token):
     return _gear_cache[gear_id]
 
 
+def fetch_laps(activity_id, token):
+    """GET /activities/{id}/laps -- requires activity:read_all, which the
+    stored refresh token already has scope for."""
+    try:
+        return strava_get(f"/activities/{activity_id}/laps", token)
+    except requests.HTTPError:
+        return []
+
+
+def build_lap_rows(activity_id, date_part: str, laps: list) -> list:
+    rows = []
+    for lap in laps:
+        distance_m = lap.get("distance", 0) or 0
+        avg_speed = lap.get("average_speed", 0) or 0
+
+        distance_km = round(distance_m / 1000, 3)
+        distance_mi = round(distance_m / 1609.34, 3)
+        avg_pace_km = round((1000 / avg_speed) / 60, 2) if avg_speed else None
+        avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
+
+        # Same units as the parent activity: total_elevation_gain in meters,
+        # see https://developers.strava.com/docs/reference/ (Lap model)
+        elevation_gain_m = lap.get("total_elevation_gain")
+        elevation_gain_ft = round(elevation_gain_m * 3.28084, 1) if elevation_gain_m is not None else None
+
+        rows.append([
+            activity_id,
+            date_part,
+            lap.get("lap_index"),
+            lap.get("name"),
+            distance_km,
+            distance_mi,
+            round((lap.get("moving_time", 0) or 0) / 60, 2),
+            round((lap.get("elapsed_time", 0) or 0) / 60, 2),
+            elevation_gain_m,
+            elevation_gain_ft,
+            avg_pace_km,
+            avg_pace_mi,
+            lap.get("average_heartrate"),
+            lap.get("max_heartrate"),
+            lap.get("average_cadence"),
+            lap.get("average_watts"),
+        ])
+    return rows
+
+
 def build_row(detail: dict, gear: dict | None) -> list:
     distance_m = detail.get("distance", 0) or 0
     avg_speed = detail.get("average_speed", 0) or 0
@@ -109,9 +173,11 @@ def build_row(detail: dict, gear: dict | None) -> list:
     avg_pace_km = round((1000 / avg_speed) / 60, 2) if avg_speed else None
     avg_pace_mi = round(avg_pace_km * 1.60934, 2) if avg_pace_km is not None else None
 
-    # Strava's API returns total_elevation_gain in feet
-    elevation_gain_ft = detail.get("total_elevation_gain")
-    elevation_gain_m = round(elevation_gain_ft / 3.28084, 1) if elevation_gain_ft is not None else None
+    # Strava's API documents total_elevation_gain as meters (see
+    # https://developers.strava.com/docs/reference/ - Activity model,
+    # "total_elevation_gain: Float, The elevation gain of this activity, in meters")
+    elevation_gain_m = detail.get("total_elevation_gain")
+    elevation_gain_ft = round(elevation_gain_m * 3.28084, 1) if elevation_gain_m is not None else None
 
     # start_date_local looks like "2026-07-21T07:41:26Z" -- the "Z" is
     # misleading (Strava uses it here to mean local wall-clock time, not UTC)
@@ -216,8 +282,18 @@ def get_or_create_sheet(gc):
     return sh, ws
 
 
+def get_or_create_worksheet(sh, title, header):
+    try:
+        ws = sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows=1000, cols=max(len(header), 2))
+    if not ws.row_values(1):
+        ws.append_row(header)
+    return ws
+
+
 def main():
-    lookback_days = int(os.environ.get("LOOKBACK_DAYS", "3"))
+    lookback_days = int(os.environ.get("LOOKBACK_DAYS", "7"))
 
     token = get_access_token()
     activities = fetch_recent_activities(token, lookback_days)
@@ -228,13 +304,21 @@ def main():
     existing_ids = set(ws.col_values(1)[1:])  # skip header
 
     rows = []
+    lap_rows = []
     for a in activities:
         aid = str(a["id"])
         if aid in existing_ids:
             continue
         detail = strava_get(f"/activities/{aid}", token)
         gear = fetch_gear(detail.get("gear_id"), token)
-        rows.append(build_row(detail, gear))
+        row = build_row(detail, gear)
+        rows.append(row)
+
+        if detail.get("sport_type") == "Run":
+            date_part = row[1]  # already computed by build_row, keep it in sync
+            laps = fetch_laps(aid, token)
+            lap_rows.extend(build_lap_rows(aid, date_part, laps))
+
         time.sleep(0.3)  # be polite to Strava's rate limits
 
     if rows:
@@ -243,6 +327,11 @@ def main():
         notify_slack(rows, sh.url)
     else:
         print("No new activities to sync.")
+
+    if lap_rows:
+        laps_ws = get_or_create_worksheet(sh, LAPS_WORKSHEET_TITLE, LAPS_HEADER)
+        laps_ws.append_rows(lap_rows, value_input_option="USER_ENTERED")
+        print(f"Synced {len(lap_rows)} lap row(s) to {sh.url} ({LAPS_WORKSHEET_TITLE} tab)")
 
 
 if __name__ == "__main__":

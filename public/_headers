@@ -1,0 +1,8 @@
+# Cloudflare Pages header rules.
+# The snapshot is rewritten twice a day, so it must not be edge-cached --
+# otherwise the page can serve yesterday's training data for hours.
+/data.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/index.html
+  Cache-Control: no-cache, must-revalidate

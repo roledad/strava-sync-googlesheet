@@ -10,9 +10,17 @@ on:
     - cron: "0 12 * * *"  # 8:00am EDT (UTC-4, roughly mid-Mar to early Nov)
   workflow_dispatch: {}  # lets you trigger it manually from the Actions tab
 
+# Only one run at a time, so the two scheduled triggers can never race each
+# other while committing the dashboard snapshot.
+concurrency:
+  group: strava-sync
+  cancel-in-progress: false
+
 jobs:
   strava-sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit public/ back to the repo
     steps:
       - uses: actions/checkout@v6
 
@@ -32,6 +40,32 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python strava_to_sheets.py
+
+      # Rebuilds public/data.json + public/index.html by reading back the
+      # sheet the step above just wrote, then commits it. Cloudflare Pages
+      # watches this repo and redeploys on the push. No Strava credentials
+      # here on purpose -- everything the dashboard shows is already in the
+      # sheet, so this step only needs read access to Google.
+      - name: Build static dashboard snapshot
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          RACE_DATE: ${{ vars.RACE_DATE }}
+          FIRST_WEEK: ${{ vars.FIRST_WEEK }}
+        run: python build_static.py
+
+      - name: Publish snapshot
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/
+          if git diff --staged --quiet; then
+            echo "No dashboard changes to publish."
+          else
+            git commit -m "Update dashboard snapshot"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
   whoop-sync:
     runs-on: ubuntu-latest

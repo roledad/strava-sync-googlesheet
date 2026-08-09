@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1216; --panel:#161b21; --panel-2:#1d232b; --line:#272f39; --line-2:#333d49;
+    --text:#e7ecf2; --muted:#8b97a6; --dim:#5d6874;
+    --accent:#fc5200; --blue:#4aa8ff; --green:#35d07f; --amber:#ffb020; --violet:#a78bfa;
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1380px; margin:0 auto; padding:26px 22px 90px; }
+
+  header { display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:14px; }
+  h1 { font-size:23px; margin:0; letter-spacing:-.02em; font-weight:660; }
+  h1 span { color:var(--accent); }
+  .sub { color:var(--muted); font-size:12.5px; }
+  .ctrls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button, select, input { font:inherit; color:var(--text); background:var(--panel-2);
+    border:1px solid var(--line-2); border-radius:8px; padding:6px 11px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  select { cursor:pointer; }
+  .seg { display:inline-flex; border:1px solid var(--line-2); border-radius:8px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; background:transparent; padding:6px 12px; color:var(--muted); }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .seg button:hover:not(.on) { background:var(--panel-2); color:var(--text); }
+
+  section { margin-top:26px; }
+  .shead { display:flex; align-items:baseline; justify-content:space-between; gap:14px;
+    flex-wrap:wrap; margin-bottom:12px; }
+  h2 { font-size:12px; margin:0; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); font-weight:640; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px 18px; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(146px,1fr)); gap:11px; margin:18px 0 0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:13px 15px; }
+  .card .l { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; }
+  .card .v { font-size:25px; font-weight:660; margin-top:3px; letter-spacing:-.025em; font-variant-numeric:tabular-nums; }
+  .card .v small { font-size:12.5px; color:var(--muted); font-weight:400; margin-left:3px; letter-spacing:0; }
+  .card .f { color:var(--dim); font-size:11.5px; margin-top:2px; }
+
+  table { border-collapse:collapse; width:100%; }
+  th { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
+    font-weight:600; padding:0 10px 9px; border-bottom:1.5px solid var(--line-2); text-align:right; white-space:nowrap; }
+  th.l, td.l { text-align:left; }
+  td { padding:7px 10px; text-align:right; font-variant-numeric:tabular-nums; border-bottom:1px solid #1e242c; }
+  .wk-scroll { overflow-x:auto; }
+  #wk { min-width:1100px; }
+  #wk td.wknum { font-weight:660; color:var(--muted); }
+  #wk tr.future td { color:var(--dim); }
+  #wk tr.now { background:#1b2129; }
+  #wk tr.now td.wknum { color:var(--accent); }
+  #wk tr:hover td { background:#1c2229; }
+  #wk td.gap, #wk th.gap { border-bottom:0; width:26px; padding:0; background:var(--bg); }
+  #wk td.day { position:relative; border-radius:0; }
+  #wk td.day.today { box-shadow:inset 0 0 0 1.5px var(--accent); border-radius:5px; }
+  #wk td.day.z { color:#3a434e; }
+  #wk tr.race td { color:var(--accent); font-weight:600; background:#1c1410; }
+  .dow { color:var(--muted); }
+
+  .hgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; }
+  .hcard { background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:14px 16px 10px; }
+  .hcard h3 { margin:0; font-size:13px; font-weight:620; }
+  .hcard .stats { color:var(--dim); font-size:11.5px; margin:2px 0 8px; font-variant-numeric:tabular-nums; }
+  .hbox { position:relative; height:168px; }
+
+  .alist { display:flex; flex-direction:column; gap:8px; }
+  .arow { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:12px 15px; cursor:pointer; transition:border-color .12s, transform .12s; }
+  .arow:hover { border-color:var(--line-2); transform:translateX(2px); }
+  .arow.open { border-color:var(--accent); }
+  .atop { display:grid; grid-template-columns:96px 1fr auto; gap:14px; align-items:center; }
+  .adate { color:var(--muted); font-size:12px; }
+  .adate b { display:block; color:var(--text); font-size:13px; font-weight:600; }
+  .aname { font-weight:600; font-size:14.5px; }
+  .ameta { display:flex; gap:7px; align-items:center; margin-top:2px; flex-wrap:wrap; }
+  .pill { font-size:10.5px; padding:2px 8px; border-radius:999px; background:var(--panel-2);
+    border:1px solid var(--line-2); color:var(--muted); }
+  .pill.run { color:var(--accent); border-color:#4a2a1a; background:#221610; }
+  .astats { display:flex; gap:20px; text-align:right; }
+  .astats div { min-width:56px; }
+  .astats .k { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+  .astats .n { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:1px; }
+  .adetail { display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .arow.open .adetail { display:block; }
+  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:11px; margin-bottom:14px; }
+  .kv div .k { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+  .kv div .n { font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .laptable { font-size:12.5px; }
+  .laptable th { padding:0 8px 6px; } .laptable td { padding:5px 8px; }
+  .best { color:var(--green); font-weight:660; }
+
+  #tip { position:fixed; z-index:99; pointer-events:none; opacity:0; transition:opacity .1s;
+    background:#0b0e12; border:1px solid var(--line-2); border-radius:10px; padding:10px 13px;
+    box-shadow:0 12px 34px rgba(0,0,0,.6); max-width:280px; font-size:12.5px; }
+  #tip.on { opacity:1; }
+  #tip .t { font-weight:640; margin-bottom:6px; font-size:13px; }
+  #tip .r { display:flex; justify-content:space-between; gap:18px; color:var(--muted); }
+  #tip .r b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; }
+
+  .note { background:#2a1d12; border:1px solid #5a3d1e; color:#ffd8a8; padding:11px 14px;
+    border-radius:10px; font-size:13px; margin-bottom:12px; }
+  .err { background:#2a1416; border:1px solid #5c2429; color:#ffb4b4; padding:11px 14px;
+    border-radius:10px; font-size:13px; margin-bottom:12px; }
+  .muted { color:var(--muted); } .dim { color:var(--dim); }
+  .center { text-align:center; padding:26px; }
+  .spin { display:inline-block; width:15px; height:15px; border:2px solid var(--line-2);
+    border-top-color:var(--accent); border-radius:50%; animation:sp .7s linear infinite; vertical-align:-3px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  footer { color:var(--dim); font-size:11.5px; margin-top:34px; display:flex;
+    justify-content:space-between; gap:14px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div id="tip"></div>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Training <span>Dashboard</span></h1>
+    </div>
+    <div class="ctrls">
+      <span class="seg" id="unit-seg">
+        <button data-u="mi" class="on">Miles</button><button data-u="km">Kilometers</button>
+      </span>
+      <select id="sport-sel" title="Which activities feed the weekly summary">
+        <option value="all">All activities</option>
+        <option value="run" selected>Runs only</option>
+      </select>
+      <button id="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <div id="banner"></div>
+  <div class="cards" id="cards"></div>
+
+  <!-- ============================ WEEKLY SUMMARY ============================ -->
+  <section>
+    <div class="shead">
+      <h2>Weekly summary <span class="dim" style="text-transform:none;letter-spacing:0">
+        — weeks counted down to race day · totals are Sun→Sat · day grid is Mon→Sun</span></h2>
+      <label class="sub" style="display:flex;gap:7px;align-items:center">
+        <input type="checkbox" id="hide-empty" style="accent-color:var(--accent)"> hide empty future weeks
+      </label>
+    </div>
+    <div class="panel wk-scroll">
+      <table id="wk"><thead></thead><tbody>
+        <tr><td class="center muted"><span class="spin"></span></td></tr>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ============================ HISTOGRAMS ============================ -->
+  <section>
+    <div class="shead">
+      <h2>Distributions <span class="dim" style="text-transform:none;letter-spacing:0">
+        — distance, time and elevation per activity (“STRAVA” tab) · pace, heart rate and cadence per lap (“Details” tab)</span></h2>
+      <select id="lap-scope">
+        <option value="0" selected>All</option>
+        <option value="30">Last 30 days</option>
+        <option value="10">Last 10 days</option>
+      </select>
+    </div>
+    <div class="hgrid" id="hgrid"></div>
+  </section>
+
+  <!-- ============================ LIVE STRAVA LIST ============================ -->
+  <section>
+    <div class="shead">
+      <h2>Recent activities <span class="dim" style="text-transform:none;letter-spacing:0">
+        — last 10 days, live from Strava · hover for a summary, click for full detail</span></h2>
+      <select id="type-sel">
+        <option value="all" selected>All types</option>
+        <option value="run">Runs only</option>
+        <option value="other">Everything except runs</option>
+      </select>
+    </div>
+    <div class="alist" id="alist"><div class="center muted"><span class="spin"></span></div></div>
+  </section>
+
+  <footer>
+    <span id="stamp"></span>
+    <span>Weekly summary + distributions: Google Sheet · Recent activities: Strava</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ===================================================================
+   state
+   =================================================================== */
+const S = {
+  cfg: { raceDate: "2026-11-01", firstWeek: 15, demo: false, haveStrava: true, haveSheet: true },
+  acts: [],        // sheet STRAVA tab
+  laps: [],        // sheet Details tab
+  unit: localStorage.getItem("d.unit") || "mi",
+  sport: localStorage.getItem("d.sport") || "run",
+  lapScope: +(localStorage.getItem("d.scope2") || 0),   // 0 = whole training block
+  liveType: localStorage.getItem("d.type") || "all",
+  days: 10,                                             // recent list is fixed at 10 days
+  hideEmpty: localStorage.getItem("d.hide") === "1",
+  charts: {},
+};
+const $ = s => document.querySelector(s);
+const num = v => { if (v === "" || v == null) return null; const n = +v; return Number.isFinite(n) ? n : null; };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+/* ===================================================================
+   units + formatting
+   =================================================================== */
+const U   = () => S.unit;
+const ELEV= () => S.unit === "mi" ? "ft" : "m";
+
+function fmtPace(p) {
+  if (p == null || !isFinite(p) || p <= 0) return "—";
+  let m = Math.floor(p), s = Math.round((p - m) * 60);
+  if (s === 60) { m++; s = 0; }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function fmtDur(mins) {
+  if (mins == null || !isFinite(mins)) return "—";
+  const t = Math.round(mins * 60), h = (t / 3600) | 0, m = ((t % 3600) / 60) | 0, s = t % 60;
+  return h ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+           : `${m}:${String(s).padStart(2,"0")}`;
+}
+const f = (v, d = 1) => v == null || !isFinite(v) ? "—" : v.toFixed(d);
+
+/* Calendar dates are anchored to UTC midnight so that day/week arithmetic is
+   immune to DST. This matters here: race day (Nov 1 2026) is exactly the US
+   DST fallback date, and doing the math in local time added a phantom 25th
+   hour, which pushed the week count off by one. `TODAY()` is still derived
+   from the user's *local* clock — only the arithmetic is UTC. */
+const pad2 = n => String(n).padStart(2, "0");
+const D = s => new Date(s + "T00:00:00Z");
+const iso = d => d.toISOString().slice(0, 10);
+const addDays = (d, n) => new Date(d.getTime() + n * 864e5);
+const daysBetween = (a, b) => Math.round((D(b) - D(a)) / 864e5);
+const TODAY = () => { const t = new Date(); return `${t.getFullYear()}-${pad2(t.getMonth()+1)}-${pad2(t.getDate())}`; };
+const fmtDate = (s, opt) => D(s).toLocaleDateString(undefined, Object.assign({ timeZone: "UTC" }, opt));
+
+/* ===================================================================
+   load
+   =================================================================== */
+async function api(path) {
+  const r = await fetch(path, { cache: "no-store" });
+  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+function banner(html) { $("#banner").innerHTML = html; }
+
+/* ------------------------------------------------------------------ *
+ * Data source. The page runs in one of two modes:
+ *
+ *   static — a `data.json` snapshot sits next to index.html (built by
+ *            build_static.py in CI). Everything is client-side, so this
+ *            deploys to any dumb file host.
+ *   server — serve_dashboard.py is running locally and exposes /api/sheet.
+ *
+ * Both are the same two tables (STRAVA + Details); only the transport
+ * differs. Nothing here ever talks to Strava -- the sync scripts already
+ * put everything in the sheet, so re-fetching it would just be a slower way
+ * to get the same numbers. Static wins if data.json is present, so one file
+ * serves both places.
+ * ------------------------------------------------------------------ */
+const SRC = { mode: "server", snap: null };
+
+async function detectMode() {
+  try {
+    const r = await fetch("./data.json", { cache: "no-store" });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && Array.isArray(j.activities)) { SRC.mode = "static"; SRC.snap = j; return; }
+    }
+  } catch { /* fall through to server mode */ }
+  SRC.mode = "server";
+  SRC.snap = null;
+}
+
+const source = {
+  config: () => SRC.mode === "static"
+    ? {
+        raceDate: SRC.snap.raceDate, firstWeek: SRC.snap.firstWeek, demo: !!SRC.snap.demo,
+        haveSheet: true, static: true, generatedAt: SRC.snap.generated_at,
+      }
+    : api("/api/config"),
+
+  sheet: () => SRC.mode === "static"
+    ? { activities: SRC.snap.activities, laps: SRC.snap.laps }
+    : api("/api/sheet"),
+};
+
+function normAct(r) {
+  return {
+    id: String(r.activity_id), date: String(r.date || ""), time: String(r.time || ""),
+    name: r.name || "Untitled", sport: String(r.sport_type || "Activity"),
+    dist_km: num(r.distance_km), dist_mi: num(r.distance_mi),
+    moving: num(r.moving_time_min), elapsed: num(r.elapsed_time_min),
+    elev_m: num(r.elevation_gain_m), elev_ft: num(r.elevation_gain_ft),
+    pace_km: num(r.avg_pace_min_per_km), pace_mi: num(r.avg_pace_min_per_mi),
+    hr: num(r.avg_heartrate), maxhr: num(r.max_heartrate), cad: num(r.avg_cadence),
+    desc: r.description || "", calories: num(r.calories), suffer: num(r.suffer_score),
+    gear: [r.gear_brand, r.gear_model].filter(Boolean).join(" "),
+  };
+}
+function normLap(r) {
+  return {
+    id: String(r.activity_id), date: String(r.date || ""), idx: num(r.lap_index),
+    dist_km: num(r.distance_km), dist_mi: num(r.distance_mi),
+    moving: num(r.moving_time_min), elapsed: num(r.elapsed_time_min),
+    elev_m: num(r.elevation_gain_m), elev_ft: num(r.elevation_gain_ft),
+    pace_km: num(r.avg_pace_min_per_km), pace_mi: num(r.avg_pace_min_per_mi),
+    hr: num(r.avg_heartrate), maxhr: num(r.max_heartrate), cad: num(r.avg_cadence),
+  };
+}
+
+async function loadSheet() {
+  try {
+    const d = await source.sheet();
+    S.acts = (d.activities || []).map(normAct).filter(a => /^\d{4}-\d\d-\d\d$/.test(a.date));
+    S.laps = (d.laps || []).map(normLap).filter(l => /^\d{4}-\d\d-\d\d$/.test(l.date));
+  } catch (e) {
+    banner(`<div class="err"><b>Couldn't read the training data.</b> ${esc(e.message)}</div>`);
+  }
+}
+
+/* ===================================================================
+   sheet-side selectors
+   =================================================================== */
+const isRun = a => /run/i.test(a.sport);
+const selActs = () => S.sport === "run" ? S.acts.filter(isRun) : S.acts;
+const aDist = a => U() === "mi" ? a.dist_mi : a.dist_km;
+const aElev = a => U() === "mi" ? a.elev_ft : a.elev_m;
+const paceOf = a => U() === "mi" ? a.pace_mi : a.pace_km;
+
+/** Week N ends on race day - 7(N-1) - 1; week N starts on race day - 7N.
+ *  Confirmed against the reference sheet: the cumulative columns cover
+ *  Sun→Sat (start..start+6) while the day grid shows Mon→Sun (start+1..start+7). */
+function buildWeeks() {
+  const race = D(S.cfg.raceDate);
+  const acts = selActs();
+  const byDay = new Map();
+  for (const a of acts) {
+    const e = byDay.get(a.date) || { dist: 0, n: 0 };
+    e.dist += aDist(a) || 0; e.n++;
+    byDay.set(a.date, e);
+  }
+  // Smallest N whose week start (race - 7N) is on or before the earliest
+  // activity, so the top row always contains the first day of the block --
+  // then capped at cfg.firstWeek, because anything before the block started
+  // is partial data that would skew the weekly totals and the summary cards.
+  const earliest = acts.length ? acts.reduce((m, a) => a.date < m ? a.date : m, acts[0].date) : TODAY();
+  const maxN = Math.max(1, Math.min(S.cfg.firstWeek, Math.ceil(daysBetween(earliest, S.cfg.raceDate) / 7)));
+
+  const rows = [];
+  for (let n = maxN; n >= 0; n--) {
+    const start = addDays(race, -7 * n);
+    const end = addDays(start, 6);
+    const sK = iso(start), eK = iso(end);
+    const inWeek = acts.filter(a => a.date >= sK && a.date <= eK);
+    rows.push({
+      n, start: sK, end: n === 0 ? null : eK,
+      count: inWeek.length,
+      moving: inWeek.reduce((s, a) => s + (a.moving || 0), 0),
+      elapsed: inWeek.reduce((s, a) => s + (a.elapsed || 0), 0),
+      dist: inWeek.reduce((s, a) => s + (aDist(a) || 0), 0),
+      elev: inWeek.reduce((s, a) => s + (aElev(a) || 0), 0),
+      // Mon..Sun = start+1 .. start+7
+      days: Array.from({ length: 7 }, (_, i) => {
+        const k = iso(addDays(start, i + 1));
+        return { key: k, dist: (byDay.get(k) || {}).dist || 0 };
+      }),
+    });
+  }
+  return rows;
+}
+
+/* ===================================================================
+   render: cards
+   =================================================================== */
+function renderCards(rows) {
+  const today = TODAY();
+  const daysOut = daysBetween(today, S.cfg.raceDate);
+  const cur = rows.find(r => r.n > 0 && r.start <= today && r.end >= today);
+  const weeksOut = cur ? cur.n : Math.max(0, Math.ceil(daysOut / 7));
+
+  // 4-week average excludes the week in progress, which would otherwise drag
+  // the number down every Monday.
+  const finished = rows.filter(r => r.n > 0 && r.end < today && r.count > 0);
+  const last4 = finished.slice(-4);
+  const avg4 = last4.length ? last4.reduce((s, r) => s + r.dist, 0) / last4.length : 0;
+  const peakWeek = rows.filter(r => r.count > 0).reduce((m, r) => r.dist > m.dist ? r : m, { dist: 0, n: null });
+
+  const cards = [
+    ["Weeks to race day", weeksOut, weeksOut === 1 ? "week" : "weeks",
+      `${daysOut > 0 ? daysOut + " days · " : ""}${fmtDate(S.cfg.raceDate, { month: "short", day: "numeric", year: "numeric" })}`],
+    ["Distance this week", f(cur ? cur.dist : 0, 1), U(),
+      cur ? `${cur.count} activit${cur.count === 1 ? "y" : "ies"}` : "no week in progress"],
+    ["Moving time this week", fmtDur(cur ? cur.moving : 0), "",
+      cur ? `elapsed ${fmtDur(cur.elapsed)}` : "—"],
+    ["Elevation this week", f(cur ? cur.elev : 0, 0), ELEV(), "gain"],
+    ["4-week avg distance", f(avg4, 1), U(),
+      last4.length ? `last ${last4.length} completed week${last4.length === 1 ? "" : "s"}` : "no completed weeks"],
+    ["Peak week distance", f(peakWeek.dist, 1), U(),
+      peakWeek.n != null ? `week ${peakWeek.n}` : "—"],
+  ];
+  $("#cards").innerHTML = cards.map(([l, v, u, ft]) =>
+    `<div class="card"><div class="l">${l}</div><div class="v">${v}${u ? `<small>${u}</small>` : ""}</div>
+     <div class="f">${ft}</div></div>`).join("");
+}
+
+/* ===================================================================
+   render: weekly table
+   =================================================================== */
+const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+function renderWeeks(rows) {
+  $("#wk").querySelector("thead").innerHTML = `<tr>
+    <th class="l">Week</th><th class="l">Start Date</th><th class="l">End Date</th>
+    <th>Activity<br>Count</th><th>Cum Moving<br>Time (min)</th><th>Cum Elapse<br>Time (min)</th>
+    <th>Cum Distance<br>(${U()})</th><th>Cum Elevation<br>Gain (${ELEV()})</th>
+    <th class="gap"></th>
+    ${DOW.map(d => `<th class="dow">${d}</th>`).join("")}
+  </tr>`;
+
+  const shown = S.hideEmpty ? rows.filter(r => r.count > 0 || (r.start <= TODAY() && r.n > 0) || r.n === 0) : rows;
+  const peakDay = Math.max(1, ...rows.flatMap(r => r.days.map(d => d.dist)));
+  const today = TODAY();
+
+  $("#wk").querySelector("tbody").innerHTML = shown.map(r => {
+    if (r.n === 0) return `<tr class="race">
+      <td class="l wknum">0</td><td class="l">${r.start}</td><td class="l">RACE DAY</td>
+      <td colspan="5" class="l">🏁 ${fmtDate(r.start, { weekday:"long", month:"long", day:"numeric" })}</td>
+      <td class="gap"></td><td colspan="7"></td></tr>`;
+
+    const future = r.count === 0 && r.start > today;
+    const now = r.start <= today && r.end >= today;
+    return `<tr class="${future ? "future" : ""} ${now ? "now" : ""}">
+      <td class="l wknum">${r.n}</td>
+      <td class="l muted">${r.start}</td>
+      <td class="l muted">${r.end}</td>
+      <td>${r.count}</td>
+      <td>${f(r.moving, 2)}</td>
+      <td>${f(r.elapsed, 2)}</td>
+      <td>${f(r.dist, 2)}</td>
+      <td>${f(r.elev, 1)}</td>
+      <td class="gap"></td>
+      ${r.days.map(d => {
+        const on = d.dist > 0;
+        const alpha = on ? (0.10 + 0.55 * Math.min(1, d.dist / peakDay)).toFixed(3) : 0;
+        return `<td class="day ${on ? "" : "z"} ${d.key === today ? "today" : ""}"
+          style="${on ? `background:rgba(252,82,0,${alpha})` : ""}" title="${d.key}">${on ? f(d.dist, 1) : 0}</td>`;
+      }).join("")}
+    </tr>`;
+  }).join("");
+}
+
+/* ===================================================================
+   render: histograms
+   =================================================================== */
+const CH = { grid:"#242c35", tick:"#8b97a6" };
+
+/** Freedman–Diaconis bin width, snapped to a 1/2/5×10^k step. */
+function binsFor(values) {
+  const v = values.slice().sort((a, b) => a - b), n = v.length;
+  const lo = v[0], hi = v[n - 1];
+  if (lo === hi) return { lo, hi: lo + 1, step: 1 };
+  const q = p => { const i = (n - 1) * p, f0 = Math.floor(i); return v[f0] + (v[Math.min(n-1,f0+1)] - v[f0]) * (i - f0); };
+  const fd = 2 * (q(.75) - q(.25)) / Math.cbrt(n);
+  let raw = fd > 0 ? fd : (hi - lo) / Math.ceil(Math.log2(n) + 1);
+  raw = Math.max(raw, (hi - lo) / 30);              // never more than ~30 bins
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+  return { lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step };
+}
+
+/** Even-width bins, chosen automatically. */
+function autoBins(values, fmt) {
+  const { lo, hi, step } = binsFor(values);
+  const k = Math.max(1, Math.round((hi - lo) / step));
+  const counts = new Array(k).fill(0);
+  for (const x of values) counts[Math.min(k - 1, Math.max(0, Math.floor((x - lo) / step)))]++;
+  return {
+    counts,
+    labels: Array.from({ length: k }, (_, i) => fmt(lo + i * step)),
+    range: i => `${fmt(lo + i * step)} – ${fmt(lo + (i + 1) * step)}`,
+    pos: v => (v - lo) / step - 0.5,
+  };
+}
+
+/** Explicit, possibly unequal-width bins from a list of interior edges.
+    The last bin is always open ("> last edge"). The first is open too
+    ("< edges[0]") unless `lo` is given, in which case it's closed
+    ("lo – edges[0]"), e.g. "0–3" for distance. */
+function edgeBins(values, edges, fmt, lo) {
+  const counts = new Array(edges.length + 1).fill(0);
+  const binOf = x => { let i = 0; while (i < edges.length && x >= edges[i]) i++; return i; };
+  for (const x of values) counts[binOf(x)]++;
+
+  const labels = counts.map((_, i) =>
+    i === 0 ? (lo != null ? `${fmt(lo)}–${fmt(edges[0])}` : `<${fmt(edges[0])}`)
+    : i === edges.length ? `>${fmt(edges[edges.length - 1])}`
+    : `${fmt(edges[i - 1])}–${fmt(edges[i])}`);
+
+  return {
+    counts, labels,
+    range: i => labels[i],
+    // fractional position inside the bin, so the median line lands sensibly
+    // even though the bins aren't the same width
+    pos: v => {
+      const i = binOf(v);
+      const a = i === 0 ? (lo != null ? lo : edges[0] - (edges[1] - edges[0])) : edges[i - 1];
+      const b = i === edges.length ? edges[i - 1] + (edges[i - 1] - edges[i - 2]) : edges[i];
+      return i - 0.5 + (b > a ? (v - a) / (b - a) : 0.5);
+    },
+  };
+}
+
+const stat = {
+  mean: v => v.reduce((a, b) => a + b, 0) / v.length,
+  median: v => { const s = v.slice().sort((a, b) => a - b), m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; },
+};
+
+/** Block start = the Sunday that week `firstWeek` begins on. "All" in the
+    distribution scope selector means "since the block started", not
+    literally everything -- with the defaults that's 2026-07-19. */
+const blockStart = () => iso(addDays(D(S.cfg.raceDate), -7 * S.cfg.firstWeek));
+
+function inScope(rows) {
+  const cut = S.lapScope ? iso(addDays(D(TODAY()), -(S.lapScope - 1))) : blockStart();
+  return rows.filter(r => r.date >= cut);
+}
+
+/* Bucket edges are declared in imperial units and converted for the km view,
+   so both views describe the same real-world values. Interior edges only --
+   the outer bins are open-ended. */
+const MI_PER_KM = 1.60934, FT_PER_M = 3.28084;
+const DIST_EDGES_MI  = [3, 6, 10, 13, 16, 20];                 // 0-3, 3-6, ... >20
+const TIME_EDGES_MIN = [35, 65, 100, 125, 155, 185];           // <35, 35-65, ... >185
+const ELEV_EDGES_FT  = [100, 200, 300, 400, 500, 600];         // <100, 100-200, ... >600
+const PACE_EDGES_MI  = [6, 6.5, 6 + 50/60, 7 + 20/60, 7 + 50/60, 8 + 20/60, 8 + 50/60, 9 + 20/60, 10];
+const PACE_CLIP_MI   = [5, 12];      // discard laps faster than 5:00 or slower than 12:00 /mi
+const CADENCE_CLIP   = [160, 200];   // discard laps below 160 or above 200 spm
+
+const paceU = v => U() === "mi" ? v : v / MI_PER_KM;   // min/mi -> min/km
+const distU = v => U() === "mi" ? v : v * MI_PER_KM;   // mi     -> km
+const elevU = v => U() === "mi" ? v : v / FT_PER_M;    // ft     -> m
+
+function renderHistograms() {
+  const runIds = new Set(S.acts.filter(isRun).map(a => a.id));
+  const A = inScope(selActs());
+  const L = inScope(S.sport === "run" ? S.laps.filter(l => runIds.has(l.id)) : S.laps);
+
+  const specs = [
+    { id:"h-dist", lvl:"activity", title:`Distance per activity (${U()})`, color:"#fc5200",
+      get: a => U() === "mi" ? a.dist_mi : a.dist_km, fmt: v => f(v, U() === "mi" ? 0 : 1),
+      sfmt: v => f(v, 2),   // bucket edges are whole numbers; stats want decimals
+      edges: () => DIST_EDGES_MI.map(distU), lo: () => 0 },
+    { id:"h-time", lvl:"activity", title:"Moving time per activity (min)", color:"#4aa8ff",
+      get: a => a.moving, fmt: v => f(v, 0),
+      edges: () => TIME_EDGES_MIN },
+    { id:"h-elev", lvl:"activity", title:`Elevation gain per activity (${ELEV()})`, color:"#a78bfa",
+      get: a => U() === "mi" ? a.elev_ft : a.elev_m, fmt: v => f(v, 0),
+      edges: () => ELEV_EDGES_FT.map(elevU) },
+    { id:"h-pace", lvl:"lap", title:`Lap average pace (min/${U()})`, color:"#35d07f",
+      get: l => U() === "mi" ? l.pace_mi : l.pace_km, fmt: fmtPace,
+      edges: () => PACE_EDGES_MI.map(paceU),
+      clip: () => PACE_CLIP_MI.map(paceU), clipNote: "outside 5:00–12:00 /mi" },
+    { id:"h-hr", lvl:"lap", title:"Lap average heart rate (bpm)", color:"#ff4d6d",
+      get: l => l.hr, fmt: v => f(v, 0) },
+    { id:"h-cad", lvl:"lap", title:"Lap average cadence (spm)", color:"#ffb020",
+      get: l => l.cad != null ? l.cad * 2 : null, fmt: v => f(v, 0),
+      clip: () => CADENCE_CLIP, clipNote: "outside 160–200 spm" },
+  ];
+
+  $("#hgrid").innerHTML = specs.map(s =>
+    `<div class="hcard"><h3>${s.title}</h3><div class="stats" id="${s.id}-s">—</div>
+     <div class="hbox"><canvas id="${s.id}"></canvas></div></div>`).join("");
+
+  for (const s of specs) {
+    const noun = s.lvl === "lap" ? "lap" : "activity";
+    const plural = s.lvl === "lap" ? "laps" : "activities";
+    const el = document.getElementById(s.id + "-s");
+    S.charts[s.id]?.destroy();
+
+    const raw = (s.lvl === "lap" ? L : A).map(s.get).filter(v => v != null && isFinite(v));
+    let vals = raw, dropped = 0;
+    if (s.clip) {
+      const [lo, hi] = s.clip();
+      vals = raw.filter(v => v >= lo && v <= hi);
+      dropped = raw.length - vals.length;
+    }
+    if (vals.length < 2) { el.textContent = `not enough data in this window`; continue; }
+
+    const h = s.edges ? edgeBins(vals, s.edges(), s.fmt, s.lo ? s.lo() : null)
+                      : autoBins(vals, s.fmt);
+    const med = stat.median(vals), mean = stat.mean(vals), sf = s.sfmt || s.fmt;
+    el.innerHTML = `n = ${vals.length} ${plural} &nbsp;·&nbsp; median ${sf(med)} &nbsp;·&nbsp; mean ${sf(mean)}` +
+      (dropped ? ` &nbsp;·&nbsp; <span style="color:var(--dim)">${dropped} dropped (${s.clipNote})</span>` : "");
+
+    S.charts[s.id] = new Chart(document.getElementById(s.id), {
+      type: "bar",
+      data: { labels: h.labels, datasets: [{ data: h.counts, backgroundColor: s.color + "cc",
+        hoverBackgroundColor: s.color, borderRadius: 3, barPercentage: 1, categoryPercentage: .94 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          title: c => h.range(c[0].dataIndex),
+          label: c => `${c.parsed.y} ${c.parsed.y === 1 ? noun : plural} (${(c.parsed.y / vals.length * 100).toFixed(1)}%)`,
+        } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: CH.tick, font: { size: 10 },
+               maxRotation: s.edges ? 50 : 0, autoSkip: !s.edges, autoSkipPadding: 14 } },
+          y: { grid: { color: CH.grid }, beginAtZero: true,
+               ticks: { color: CH.tick, font: { size: 10 }, precision: 0 },
+               title: { display: true, text: plural, color: CH.tick, font: { size: 10 } } },
+        },
+      },
+      plugins: [{
+        id: "medline",
+        afterDatasetsDraw(ch) {
+          const x = ch.scales.x.getPixelForValue(h.pos(med));
+          const { top, bottom, left, right } = ch.chartArea;
+          if (!isFinite(x) || x < left || x > right) return;
+          const c = ch.ctx;
+          c.save(); c.setLineDash([4, 3]); c.strokeStyle = "#e7ecf2"; c.lineWidth = 1;
+          c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
+          c.setLineDash([]); c.fillStyle = "#e7ecf2"; c.font = "10px sans-serif";
+          const flip = x > (left + right) / 2;
+          c.textAlign = flip ? "right" : "left";
+          c.fillText(flip ? "med " : " med", x, top + 9); c.restore();
+        },
+      }],
+    });
+  }
+}
+
+/* ===================================================================
+   render: live Strava list
+   =================================================================== */
+/** The recent list is just a window over the sheet data already in memory --
+    no separate fetch, and no second shape to keep in sync. */
+function recentActs() {
+  const cut = iso(addDays(D(TODAY()), -(S.days - 1)));
+  let list = S.acts.filter(a => a.date >= cut);
+  if (S.liveType !== "all") {
+    const want = S.liveType === "run";
+    list = list.filter(a => isRun(a) === want);
+  }
+  return list.sort((x, y) => (y.date + y.time).localeCompare(x.date + x.time));
+}
+
+function renderLive() {
+  const box = $("#alist");
+  const list = recentActs();
+  if (!list.length) {
+    box.innerHTML = `<div class="panel center muted">No ${
+      S.liveType === "run" ? "runs" : S.liveType === "other" ? "non-run activities" : "activities"
+    } in the last ${S.days} days.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(a => {
+    const run = isRun(a);
+    const time = a.time ? a.time.slice(0, 5) : "";
+    return `<div class="arow" data-id="${esc(a.id)}">
+      <div class="atop">
+        <div class="adate"><b>${fmtDate(a.date, { weekday:"short", month:"short", day:"numeric" })}</b>${time}</div>
+        <div>
+          <div class="aname">${esc(a.name)}</div>
+          <div class="ameta">
+            <span class="pill ${run ? "run" : ""}">${esc(a.sport)}</span>
+            ${a.suffer ? `<span class="pill">effort ${a.suffer}</span>` : ""}
+            ${a.gear ? `<span class="pill">${esc(a.gear)}</span>` : ""}
+          </div>
+        </div>
+        <div class="astats">
+          <div><div class="k">Dist</div><div class="n">${f(aDist(a), 2)}</div></div>
+          <div><div class="k">Time</div><div class="n">${fmtDur(a.moving)}</div></div>
+          <div><div class="k">Pace</div><div class="n">${fmtPace(paceOf(a))}</div></div>
+          <div><div class="k">HR</div><div class="n">${a.hr ? Math.round(a.hr) : "—"}</div></div>
+          <div><div class="k">Elev</div><div class="n">${f(aElev(a), 0)}</div></div>
+        </div>
+      </div>
+      <div class="adetail"></div>
+    </div>`;
+  }).join("");
+
+  box.querySelectorAll(".arow").forEach(row => {
+    const a = list.find(x => x.id === row.dataset.id);
+    row.addEventListener("mousemove", e => showTip(e, a, row));
+    row.addEventListener("mouseleave", hideTip);
+    row.addEventListener("click", () => toggle(row, a));
+  });
+}
+
+/* Detail is rendered straight from the sheet rows already in memory, so
+   expanding a row makes no network request in either mode. */
+function toggle(row, a) {
+  if (!row.classList.toggle("open")) return;
+  hideTip();
+  renderDetail(row.querySelector(".adetail"), a);
+}
+
+function renderDetail(pane, a) {
+  const laps = S.laps.filter(l => l.id === a.id).sort((x, y) => (x.idx || 0) - (y.idx || 0));
+  const kv = [
+    ["Distance", `${f(aDist(a), 2)} ${U()}`],
+    ["Moving", fmtDur(a.moving)],
+    ["Elapsed", fmtDur(a.elapsed)],
+    ["Avg pace", `${fmtPace(paceOf(a))} /${U()}`],
+    ["Elev gain", `${f(aElev(a), 0)} ${ELEV()}`],
+    ["Avg HR", a.hr ? Math.round(a.hr) + " bpm" : "—"],
+    ["Max HR", a.maxhr ? Math.round(a.maxhr) + " bpm" : "—"],
+    ["Cadence", a.cad ? Math.round(a.cad * 2) + " spm" : "—"],
+    ["Calories", a.calories ? Math.round(a.calories) : "—"],
+    ["Effort", a.suffer ?? "—"],
+    ["Shoes", a.gear || "—"],
+  ];
+
+  const lapPace = l => U() === "mi" ? l.pace_mi : l.pace_km;
+  const paces = laps.map(lapPace).filter(p => p != null);
+  const best = paces.length ? Math.min(...paces) : null;
+
+  pane.innerHTML =
+    (a.desc ? `<p class="muted" style="margin:0 0 12px">${esc(a.desc)}</p>` : "") +
+    `<div class="kv">${kv.map(([k, v]) => `<div><div class="k">${k}</div><div class="n">${v}</div></div>`).join("")}</div>` +
+    (laps.length > 1 ? `<table class="laptable"><thead><tr>
+        <th class="l">Lap</th><th>Dist</th><th>Time</th><th>Pace</th>
+        <th>Avg HR</th><th>Max HR</th><th>Cadence</th><th>Elev</th></tr></thead><tbody>
+      ${laps.map(l => { const p = lapPace(l); return `<tr>
+        <td class="l muted">${l.idx ?? ""}</td>
+        <td>${f(U() === "mi" ? l.dist_mi : l.dist_km, 2)}</td>
+        <td>${fmtDur(l.moving)}</td>
+        <td class="${p === best ? "best" : ""}">${fmtPace(p)}</td>
+        <td>${l.hr ? Math.round(l.hr) : "—"}</td>
+        <td>${l.maxhr ? Math.round(l.maxhr) : "—"}</td>
+        <td>${l.cad ? Math.round(l.cad * 2) : "—"}</td>
+        <td>${f(U() === "mi" ? l.elev_ft : l.elev_m, 0)}</td></tr>`; }).join("")}
+      </tbody></table>` : `<p class="dim" style="margin:0">No lap data for this activity.</p>`);
+}
+
+/* -------------------------------- hover tip ------------------------------ */
+const tip = $("#tip");
+function showTip(e, a, row) {
+  if (row.classList.contains("open")) return hideTip();
+  const rows = [
+    ["Distance", `${f(aDist(a), 2)} ${U()}`],
+    ["Moving time", fmtDur(a.moving)],
+    ["Avg pace", `${fmtPace(paceOf(a))} /${U()}`],
+    ["Elev gain", `${f(aElev(a), 0)} ${ELEV()}`],
+    ["Avg HR", a.hr ? Math.round(a.hr) + " bpm" : "—"],
+    ["Cadence", a.cad ? Math.round(a.cad * 2) + " spm" : "—"],
+  ];
+  tip.innerHTML = `<div class="t">${esc(a.name)}</div>` +
+    rows.map(([k, v]) => `<div class="r"><span>${k}</span><b>${v}</b></div>`).join("") +
+    `<div class="r" style="margin-top:7px"><span class="dim">click for laps &amp; full detail</span></div>`;
+  tip.classList.add("on");
+  const pad = 16, w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(e.clientX + pad, innerWidth - w - 8) + "px";
+  tip.style.top = Math.min(Math.max(8, e.clientY + pad), innerHeight - h - 8) + "px";
+}
+const hideTip = () => tip.classList.remove("on");
+
+/* ===================================================================
+   orchestration
+   =================================================================== */
+function renderSheetSide() {
+  const rows = buildWeeks();
+  renderCards(rows);
+  renderWeeks(rows);
+  renderHistograms();
+  $("#stamp").textContent = S.cfg.generatedAt
+    ? "Data as of " + new Date(S.cfg.generatedAt).toLocaleString()
+    : "Loaded " + new Date().toLocaleString();
+}
+
+function bind() {
+  $("#unit-seg").onclick = e => {
+    const b = e.target.closest("button[data-u]"); if (!b) return;
+    S.unit = b.dataset.u; localStorage.setItem("d.unit", S.unit);
+    [...$("#unit-seg").children].forEach(x => x.classList.toggle("on", x === b));
+    renderSheetSide(); renderLive();
+  };
+  // Unit/type changes re-render from memory, so open rows must be redrawn too.
+  [...$("#unit-seg").children].forEach(b => b.classList.toggle("on", b.dataset.u === S.unit));
+
+  const sp = $("#sport-sel"); sp.value = S.sport;
+  sp.onchange = () => { S.sport = sp.value; localStorage.setItem("d.sport", S.sport); renderSheetSide(); };
+
+  const sc = $("#lap-scope"); sc.value = String(S.lapScope);
+  sc.onchange = () => { S.lapScope = +sc.value; localStorage.setItem("d.scope2", sc.value); renderHistograms(); };
+
+  const he = $("#hide-empty"); he.checked = S.hideEmpty;
+  he.onchange = () => { S.hideEmpty = he.checked; localStorage.setItem("d.hide", he.checked ? "1" : "0");
+    renderWeeks(buildWeeks()); };
+
+  const ts = $("#type-sel"); ts.value = S.liveType;
+  ts.onchange = () => { S.liveType = ts.value; localStorage.setItem("d.type", ts.value); renderLive(); };
+
+  $("#refresh").onclick = () => boot(true);
+  addEventListener("scroll", hideTip, { passive: true });
+}
+
+async function boot(isRefresh) {
+  await detectMode();
+  try { S.cfg = await source.config(); } catch { /* keep defaults */ }
+  if (!isRefresh) bind();
+
+  const notes = [];
+  if (S.cfg.demo) notes.push("Built from <b>generated demo data</b>, not your real Sheet.");
+  if (!S.cfg.haveSheet) notes.push("<b>GOOGLE_SHEET_ID isn't set</b>, so there's nothing to show.");
+  banner(notes.map(n => `<div class="note">${n}</div>`).join(""));
+
+  await loadSheet();
+  renderSheetSide();
+  renderLive();
+}
+
+boot(false);
+</script>
+</body>
+</html>

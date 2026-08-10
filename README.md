@@ -293,7 +293,15 @@ python serve_dashboard.py
 It opens <http://127.0.0.1:8420/>. `--port N` changes the port, `--no-open`
 skips the browser, and `--demo` runs the whole thing on generated data with
 no credentials at all — useful for checking the page renders before wiring
-anything up.
+anything up. `build_static.py --demo` writes to `public_demo/` (gitignored)
+rather than `public/`, so a test build can't overwrite the real snapshot
+that Cloudflare deploys.
+
+`RACE_DATE` and `FIRST_WEEK` are validated at import: a malformed date or an
+out-of-range week number exits with a message instead of producing a
+snapshot the page renders as `NaN`. Empty values are treated as unset, since
+GitHub Actions expands an undefined `${{ vars.X }}` to an empty string rather
+than omitting it.
 
 ### How the week math works
 

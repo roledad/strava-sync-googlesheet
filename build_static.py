@@ -44,7 +44,10 @@ from datetime import datetime, timezone
 import serve_dashboard as sd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(HERE, "public")
+
+# A --demo build writes to public_demo/ so it can never clobber the real
+# snapshot in public/, which is the thing Cloudflare Pages actually deploys.
+OUT_DIR = os.path.join(HERE, "public_demo" if sd.DEMO else "public")
 
 # Only these columns are copied. Anything else in the tabs is dropped.
 ACT_FIELDS = [
@@ -107,8 +110,9 @@ def main():
             os.remove(data_path)
             sys.exit(f"ABORT: '{needle}' found in data.json -- refusing to publish.")
 
+    out = os.path.basename(OUT_DIR)
     kb = os.path.getsize(data_path) / 1024
-    print(f"  wrote public/data.json ({kb:.0f} KB) and public/index.html")
+    print(f"  wrote {out}/data.json ({kb:.0f} KB) and {out}/index.html")
 
 
 if __name__ == "__main__":

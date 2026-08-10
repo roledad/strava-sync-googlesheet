@@ -67,6 +67,19 @@ DEMO = "--demo" in sys.argv
 # --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
+def env(name, default=None):
+    """os.environ.get, but treats an empty/whitespace value as absent.
+
+    GitHub Actions expands an undefined `${{ vars.X }}` to an empty string
+    rather than omitting the variable, so a plain os.environ.get(name, default)
+    hands back "" and the default never applies. That crashed the build on
+    int("") for FIRST_WEEK, and would have silently produced an invalid
+    RACE_DATE -- which the page turns into NaN weeks rather than an error."""
+    v = os.environ.get(name)
+    v = v.strip() if v else ""
+    return v if v else default
+
+
 def load_dotenv():
     path = os.path.join(HERE, ".env")
     if not os.path.exists(path):
@@ -77,18 +90,29 @@ def load_dotenv():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+            k = k.strip()
+            # Overwrite blanks too, so an empty CI variable can't shadow .env
+            if not env(k):
+                os.environ[k] = v.strip().strip("'\"")
 
 
 load_dotenv()
 
-RACE_DATE = os.environ.get("RACE_DATE", DEFAULT_RACE_DATE)
-FIRST_WEEK = int(os.environ.get("FIRST_WEEK", "15"))
-PORT = int(os.environ.get("PORT", "8420"))
+RACE_DATE = env("RACE_DATE", DEFAULT_RACE_DATE)
+FIRST_WEEK = int(env("FIRST_WEEK", "15"))
+PORT = int(env("PORT", "8420"))
 if "--port" in sys.argv:
     PORT = int(sys.argv[sys.argv.index("--port") + 1])
 
-HAVE_SHEET = DEMO or bool(os.environ.get("GOOGLE_SHEET_ID"))
+HAVE_SHEET = DEMO or bool(env("GOOGLE_SHEET_ID"))
+
+# Fail loudly here rather than shipping a snapshot the dashboard can't parse.
+try:
+    date.fromisoformat(RACE_DATE)
+except ValueError:
+    sys.exit(f"RACE_DATE must be YYYY-MM-DD, got {RACE_DATE!r}")
+if not 1 <= FIRST_WEEK <= 104:
+    sys.exit(f"FIRST_WEEK must be between 1 and 104, got {FIRST_WEEK}")
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +126,7 @@ def sheet_client():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    raw = env("GOOGLE_SERVICE_ACCOUNT_JSON")
     if raw:
         info = json.loads(raw)
     else:
@@ -132,7 +156,7 @@ def fetch_sheet():
             return _sheet_cache["data"]
 
         gc = sheet_client()
-        sh = gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
+        sh = gc.open_by_key(env("GOOGLE_SHEET_ID"))
 
         def records(title):
             try:

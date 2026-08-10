@@ -219,6 +219,38 @@ def demo_sheet():
                 "avg_heartrate": lhr, "max_heartrate": round(lhr + random.uniform(5, 20), 1),
                 "avg_cadence": round(cad + random.uniform(-4, 4), 1), "avg_watts": "",
             })
+        # a second run on some days, and an occasional non-run session, so the
+        # same-day merge and the non-run display path are both exercised
+        if random.random() < 0.18:
+            aid += 1
+            mi2 = round(random.uniform(2, 5), 2); pace2 = round(random.uniform(8, 10), 2)
+            mv2 = round(mi2 * pace2, 2); hr2 = round(random.uniform(125, 150), 1)
+            acts.append({
+                "activity_id": aid, "date": day.isoformat(), "time": "18:%02d:00" % random.randint(0, 59),
+                "name": "Evening Shakeout", "sport_type": "Run", "description": "",
+                "distance_km": round(mi2 * 1.60934, 3), "distance_mi": mi2,
+                "moving_time_min": mv2, "elapsed_time_min": round(mv2 * 1.05, 2),
+                "elevation_gain_m": 12.0, "elevation_gain_ft": 39.4,
+                "avg_pace_min_per_km": round(pace2 / 1.60934, 2), "avg_pace_min_per_mi": pace2,
+                "calories": 300, "avg_cadence": 84.0, "has_heartrate": "TRUE",
+                "avg_heartrate": hr2, "max_heartrate": round(hr2 + 12, 1),
+                "avg_watts": "", "suffer_score": 30, "gear_brand": "Nike", "gear_model": "Pegasus",
+            })
+        if random.random() < 0.15:
+            aid += 1
+            mv3 = round(random.uniform(30, 75), 2); hr3 = round(random.uniform(110, 140), 1)
+            acts.append({
+                "activity_id": aid, "date": day.isoformat(), "time": "12:%02d:00" % random.randint(0, 59),
+                "name": random.choice(["Recovery Spin", "Strength Session", "Pool Swim"]),
+                "sport_type": random.choice(["Ride", "WeightTraining", "Swim"]), "description": "",
+                "distance_km": "", "distance_mi": "",
+                "moving_time_min": mv3, "elapsed_time_min": round(mv3 * 1.1, 2),
+                "elevation_gain_m": "", "elevation_gain_ft": "",
+                "avg_pace_min_per_km": "", "avg_pace_min_per_mi": "",
+                "calories": 250, "avg_cadence": "", "has_heartrate": "TRUE",
+                "avg_heartrate": hr3, "max_heartrate": round(hr3 + 18, 1),
+                "avg_watts": "", "suffer_score": 25, "gear_brand": "", "gear_model": "",
+            })
         day += timedelta(days=1)
     return {"activities": acts, "laps": laps}
 

@@ -61,7 +61,9 @@
   #wk td.day { position:relative; border-radius:0; }
   #wk td.day.today { box-shadow:inset 0 0 0 1.5px var(--accent); border-radius:5px; }
   #wk td.day.z { color:#3a434e; }
-  #wk tr.race td { color:var(--accent); font-weight:600; background:#1c1410; }
+  #wk tr.race td { background:#1c1410; }
+  #wk tr.race td.wknum { color:var(--accent); }
+  #wk td.day.raceday { box-shadow:inset 0 0 0 1.5px var(--green); border-radius:5px; }
   .dow { color:var(--muted); }
 
   .hgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; }
@@ -127,6 +129,7 @@
       <div class="sub" id="stamp"></div>
     </div>
     <div class="ctrls">
+      <select id="cycle-sel" title="Training cycle"></select>
       <span class="seg" id="unit-seg">
         <button data-u="mi" class="on">Miles</button><button data-u="km">Kilometers</button>
       </span>
@@ -165,7 +168,7 @@
   </section>
 
   <!-- ============================ LIVE STRAVA LIST ============================ -->
-  <section>
+  <section id="sec-recent">
     <div class="shead">
       <h2>Recent activities</h2>
       <select id="type-sel">
@@ -187,8 +190,14 @@
    =================================================================== */
 const S = {
   cfg: { raceDate: "2026-11-01", firstWeek: 15, demo: false, haveStrava: true, haveSheet: true },
-  acts: [],        // sheet STRAVA tab
-  laps: [],        // sheet Details tab
+  acts: [],        // active cycle's activities (sheet rows, or a past cycle)
+  laps: [],        // active cycle's laps (current cycle only -- history has none)
+  sheetActs: [],   // current cycle, from the sheet
+  sheetLaps: [],
+  cycles: [],      // past cycles from past_cycles.json
+  cycle: "current",// "current" or an index into cycles
+  race: "2026-11-01",
+  firstWeek: 15,
   unit: localStorage.getItem("d.unit") || "mi",
   lapScope: +(localStorage.getItem("d.scope2") || 0),   // 0 = whole training block
   liveType: localStorage.getItem("d.type") || "all",
@@ -230,6 +239,20 @@ const D = s => new Date(s + "T00:00:00Z");
 const iso = d => d.toISOString().slice(0, 10);
 const addDays = (d, n) => new Date(d.getTime() + n * 864e5);
 const daysBetween = (a, b) => Math.round((D(b) - D(a)) / 864e5);
+/* The current cycle runs Sunday->Saturday (NYCM is a Sunday race, and that's
+   how the training log is kept); past cycles run Monday->Sunday. Both halves
+   of the table use whichever applies, so the day grid always covers exactly
+   the same days as the cumulative columns. */
+const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const weekStartDow = () => isPast() ? 1 : 0;          // 0 = Sunday, 1 = Monday
+
+/** Start of the week containing `key` (ISO date string), as a UTC Date. */
+const weekStartOf = key => {
+  const d = D(key);
+  return addDays(d, -(((d.getUTCDay() - weekStartDow()) + 7) % 7));
+};
+const gridDows = () =>
+  Array.from({ length: 7 }, (_, i) => DOW_NAMES[(weekStartDow() + i) % 7]);
 const TODAY = () => { const t = new Date(); return `${t.getFullYear()}-${pad2(t.getMonth()+1)}-${pad2(t.getDate())}`; };
 const fmtDate = (s, opt) => D(s).toLocaleDateString(undefined, Object.assign({ timeZone: "UTC" }, opt));
 /** "07:03:26" -> "7:03am". Sheet times are local wall clock, so no zone math. */
@@ -292,6 +315,19 @@ const source = {
   sheet: () => SRC.mode === "static"
     ? { activities: SRC.snap.activities, laps: SRC.snap.laps }
     : api("/api/sheet"),
+
+  /* Past cycles are a static extract built from past_activities.json. The
+     file sits next to the page in both modes (serve_dashboard.py serves it
+     out of public/ when it exists), so there's one code path. Missing file
+     just means no history -- the dropdown collapses to the current cycle. */
+  past: async () => {
+    try {
+      const r = await fetch("./past_cycles.json", { cache: "no-store" });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return Array.isArray(j.cycles) ? j.cycles : [];
+    } catch { return []; }
+  },
 };
 
 function normAct(r) {
@@ -321,8 +357,8 @@ function normLap(r) {
 async function loadSheet() {
   try {
     const d = await source.sheet();
-    S.acts = (d.activities || []).map(normAct).filter(a => /^\d{4}-\d\d-\d\d$/.test(a.date));
-    S.laps = (d.laps || []).map(normLap).filter(l => /^\d{4}-\d\d-\d\d$/.test(l.date));
+    S.sheetActs = (d.activities || []).map(normAct).filter(a => /^\d{4}-\d\d-\d\d$/.test(a.date));
+    S.sheetLaps = (d.laps || []).map(normLap).filter(l => /^\d{4}-\d\d-\d\d$/.test(l.date));
   } catch (e) {
     banner(`<div class="err"><b>Couldn't read the training data.</b> ${esc(e.message)}</div>`);
   }
@@ -348,9 +384,27 @@ function mergeSameDay(rows) {
     e.dist_mi = add(e.dist_mi, a.dist_mi);   e.dist_km = add(e.dist_km, a.dist_km);
     e.moving  = add(e.moving,  a.moving);    e.elapsed = add(e.elapsed, a.elapsed);
     e.elev_ft = add(e.elev_ft, a.elev_ft);   e.elev_m  = add(e.elev_m,  a.elev_m);
-    e.merged  = (e.merged || 1) + 1;
+    // Rates can't be summed. Pace comes back out of the combined totals, and
+    // HR/cadence are averaged weighted by how long each run lasted -- summing
+    // them would report a 2-hour day as running at 300 bpm.
+    e.hr  = wAvg(e, a, x => x.hr);
+    e.cad = wAvg(e, a, x => x.cad);
+    e.maxhr = Math.max(e.maxhr || 0, a.maxhr || 0) || null;
+    e.merged = (e.merged || 1) + 1;
+    e.pace_mi = e.dist_mi ? e.moving / e.dist_mi : null;
+    e.pace_km = e.dist_km ? e.moving / e.dist_km : null;
   }
   return [...byDay.values()];
+}
+
+/** Moving-time-weighted mean of a field across an accumulator and a new row. */
+function wAvg(acc, next, get) {
+  const av = get(acc), bv = get(next);
+  if (av == null) return bv;
+  if (bv == null) return av;
+  // acc.moving already includes next.moving at this point, so back it out
+  const bw = next.moving || 0, aw = Math.max(0, (acc.moving || 0) - bw);
+  return aw + bw ? (av * aw + bv * bw) / (aw + bw) : av;
 }
 const aDist = a => U() === "mi" ? a.dist_mi : a.dist_km;
 const aElev = a => U() === "mi" ? a.elev_ft : a.elev_m;
@@ -360,7 +414,6 @@ const paceOf = a => U() === "mi" ? a.pace_mi : a.pace_km;
  *  Confirmed against the reference sheet: the cumulative columns cover
  *  Sun→Sat (start..start+6) while the day grid shows Mon→Sun (start+1..start+7). */
 function buildWeeks() {
-  const race = D(S.cfg.raceDate);
   const acts = selActs();
   const byDay = new Map();
   for (const a of acts) {
@@ -368,31 +421,31 @@ function buildWeeks() {
     e.dist += aDist(a) || 0; e.n++;
     byDay.set(a.date, e);
   }
-  // Smallest N whose week start (race - 7N) is on or before the earliest
-  // activity, so the top row always contains the first day of the block --
-  // then capped at cfg.firstWeek, because anything before the block started
-  // is partial data that would skew the weekly totals and the summary cards.
-  const earliest = acts.length ? acts.reduce((m, a) => a.date < m ? a.date : m, acts[0].date) : TODAY();
-  const maxN = Math.max(1, Math.min(S.cfg.firstWeek, Math.ceil(daysBetween(earliest, S.cfg.raceDate) / 7)));
+  // Week 0 is the week containing race day; week N starts 7N days earlier.
+  // Both halves of the table use this same range, so the day grid reconciles
+  // with the cumulative columns.
+  const raceWeek = weekStartOf(S.race);
+  const earliest = acts.length ? acts.reduce((m, a) => a.date < m ? a.date : m, acts[0].date) : S.race;
+  let maxN = Math.max(1, Math.ceil(daysBetween(earliest, iso(raceWeek)) / 7));
+  if (!isPast()) maxN = Math.min(maxN, S.firstWeek);  // block start is deliberate
 
+  const raceKey = S.race;
   const rows = [];
   for (let n = maxN; n >= 0; n--) {
-    const start = addDays(race, -7 * n);
-    const end = addDays(start, 6);
-    const sK = iso(start), eK = iso(end);
+    const start = addDays(raceWeek, -7 * n);
+    const sK = iso(start), eK = iso(addDays(start, 6));
     const inWeek = acts.filter(a => a.date >= sK && a.date <= eK);
     rows.push({
-      n, start: sK, end: n === 0 ? null : eK,
+      n, start: sK, end: eK,
       // Same-day runs count as one session, matching the distribution plots.
       count: new Set(inWeek.map(a => a.date)).size,
       moving: inWeek.reduce((s, a) => s + (a.moving || 0), 0),
       elapsed: inWeek.reduce((s, a) => s + (a.elapsed || 0), 0),
       dist: inWeek.reduce((s, a) => s + (aDist(a) || 0), 0),
       elev: inWeek.reduce((s, a) => s + (aElev(a) || 0), 0),
-      // Mon..Sun = start+1 .. start+7
       days: Array.from({ length: 7 }, (_, i) => {
-        const k = iso(addDays(start, i + 1));
-        return { key: k, dist: (byDay.get(k) || {}).dist || 0 };
+        const k = iso(addDays(start, i));
+        return { key: k, dist: (byDay.get(k) || {}).dist || 0, race: k === raceKey };
       }),
     });
   }
@@ -403,6 +456,7 @@ function buildWeeks() {
    render: cards
    =================================================================== */
 function renderCards(rows) {
+  if (isPast()) return renderPastCards(rows);
   const today = TODAY();
   const daysOut = daysBetween(today, S.cfg.raceDate);
   const cur = rows.find(r => r.n > 0 && r.start <= today && r.end >= today);
@@ -413,7 +467,7 @@ function renderCards(rows) {
   const finished = rows.filter(r => r.n > 0 && r.end < today && r.count > 0);
   const last4 = finished.slice(-4);
   const avg4 = last4.length ? last4.reduce((s, r) => s + r.dist, 0) / last4.length : 0;
-  const peakWeek = rows.filter(r => r.count > 0).reduce((m, r) => r.dist > m.dist ? r : m, { dist: 0, n: null });
+  const peakWeek = rows.filter(r => r.n > 0 && r.count > 0).reduce((m, r) => r.dist > m.dist ? r : m, { dist: 0, n: null });
 
   const cards = [
     ["Weeks to race day", weeksOut, weeksOut === 1 ? "week" : "weeks",
@@ -433,12 +487,36 @@ function renderCards(rows) {
      <div class="f">${ft}</div></div>`).join("");
 }
 
+/** A finished cycle has no "this week", so the cards become a retrospective:
+    weekly averages, the peak week, and what the whole build was actually for. */
+function renderPastCards(rows) {
+  // Week 0 is the race week; excluding it keeps these describing the build
+  // rather than being inflated by race day itself.
+  const done = rows.filter(r => r.n > 0 && r.count > 0);
+  const n = done.length || 1;
+  const avg = f => done.reduce((s, r) => s + f(r), 0) / n;
+  const peak = done.reduce((m, r) => r.dist > m.dist ? r : m, { dist: 0, n: null });
+  const c = curCycle(), fin = c.finish;
+  const finDist = fin ? (U() === "mi" ? fin.distance_mi : fin.distance_km) : null;
+
+  const cards = [
+    ["Avg distance", f(avg(r => r.dist), 1), U(), `per week over ${n} week${n === 1 ? "" : "s"}`],
+    ["Avg moving time", fmtDur(avg(r => r.moving)), "", "per week"],
+    ["Avg elevation", f(avg(r => r.elev), 0), ELEV(), "gain per week"],
+    ["Peak week distance", f(peak.dist, 1), U(), peak.n != null ? `week ${peak.n}` : "—"],
+    ["Final finish time", fin ? fmtDur(fin.elapsed_min) : "—",
+      "", fin ? `${f(finDist, 2)} ${U()} · ${esc(fin.name)}` : "no race found on race day"],
+  ];
+  $("#cards").innerHTML = cards.map(([l, v, u, ft]) =>
+    `<div class="card"><div class="l">${l}</div><div class="v">${v}${u ? `<small>${u}</small>` : ""}</div>
+     <div class="f">${ft}</div></div>`).join("");
+}
+
 /* ===================================================================
    render: weekly table
    =================================================================== */
-const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-
 function renderWeeks(rows) {
+  const DOW = gridDows();
   $("#wk").querySelector("thead").innerHTML = `<tr>
     <th class="l">Week</th><th class="l">Start Date</th><th class="l">End Date</th>
     <th>Activity<br>Count</th><th>Cum Moving<br>Time (min)</th><th>Cum Elapse<br>Time (min)</th>
@@ -452,15 +530,12 @@ function renderWeeks(rows) {
   const today = TODAY();
 
   $("#wk").querySelector("tbody").innerHTML = shown.map(r => {
-    if (r.n === 0) return `<tr class="race">
-      <td class="l wknum">0</td><td class="l">${r.start}</td><td class="l">RACE DAY</td>
-      <td colspan="5" class="l">🏁 ${fmtDate(r.start, { weekday:"long", month:"long", day:"numeric" })}</td>
-      <td class="gap"></td><td colspan="7"></td></tr>`;
-
+    // Week 0 is the race week, not a bare marker row -- it holds the taper
+    // and the race itself, so it carries real totals like any other week.
     const future = r.count === 0 && r.start > today;
     const now = r.start <= today && r.end >= today;
-    return `<tr class="${future ? "future" : ""} ${now ? "now" : ""}">
-      <td class="l wknum">${r.n}</td>
+    return `<tr class="${r.n === 0 ? "race" : ""} ${future ? "future" : ""} ${now ? "now" : ""}">
+      <td class="l wknum">${r.n === 0 ? "0 🏁" : r.n}</td>
       <td class="l muted">${r.start}</td>
       <td class="l muted">${r.end}</td>
       <td>${r.count}</td>
@@ -472,8 +547,9 @@ function renderWeeks(rows) {
       ${r.days.map(d => {
         const on = d.dist > 0;
         const alpha = on ? (0.10 + 0.55 * Math.min(1, d.dist / peakDay)).toFixed(3) : 0;
-        return `<td class="day ${on ? "" : "z"} ${d.key === today ? "today" : ""}"
-          style="${on ? `background:rgba(252,82,0,${alpha})` : ""}" title="${d.key}">${on ? f(d.dist, 1) : 0}</td>`;
+        return `<td class="day ${on ? "" : "z"} ${d.key === today ? "today" : ""} ${d.race ? "raceday" : ""}"
+          style="${on ? `background:rgba(252,82,0,${alpha})` : ""}"
+          title="${d.key}${d.race ? " · race day" : ""}">${on ? f(d.dist, 1) : 0}</td>`;
       }).join("")}
     </tr>`;
   }).join("");
@@ -549,10 +625,28 @@ const stat = {
 /** Block start = the Sunday that week `firstWeek` begins on. "All" in the
     distribution scope selector means "since the block started", not
     literally everything -- with the defaults that's 2026-07-19. */
-const blockStart = () => iso(addDays(D(S.cfg.raceDate), -7 * S.cfg.firstWeek));
+const blockStart = () => iso(addDays(weekStartOf(S.race), -7 * S.firstWeek));
+const isPast = () => S.cycle !== "current";
+const curCycle = () => isPast() ? S.cycles[S.cycle] : null;
+
+/** Swap the active dataset. Everything downstream reads S.acts / S.laps /
+    S.race / S.firstWeek, so switching cycles is just this. */
+function applyCycle() {
+  if (isPast()) {
+    const c = S.cycles[S.cycle];
+    S.acts = c.acts; S.laps = [];
+    S.race = c.raceDate; S.firstWeek = c.firstWeek;
+  } else {
+    S.acts = S.sheetActs; S.laps = S.sheetLaps;
+    S.race = S.cfg.raceDate; S.firstWeek = S.cfg.firstWeek;
+  }
+}
 
 function inScope(rows) {
-  const cut = S.lapScope ? iso(addDays(D(TODAY()), -(S.lapScope - 1))) : blockStart();
+  // A finished cycle has no "last 30 days" -- always use the whole block.
+  const cut = (!isPast() && S.lapScope)
+    ? iso(addDays(D(TODAY()), -(S.lapScope - 1)))
+    : blockStart();
   return rows.filter(r => r.date >= cut);
 }
 
@@ -610,6 +704,9 @@ function renderHistograms() {
   // Per-activity plots merge same-day runs; lap plots use runs' laps only.
   const A = mergeSameDay(inScope(selActs()));
   const L = inScope(S.laps.filter(l => runIds.has(l.id)));
+  // History is activity summaries only -- no laps exist -- so pace, heart
+  // rate and cadence fall back to the same per-activity treatment.
+  const past = isPast();
 
   const specs = [
     { id:"h-dist", lvl:"activity", title:`Distance per activity (${U()})`, color:"#fc5200",
@@ -622,13 +719,16 @@ function renderHistograms() {
     { id:"h-elev", lvl:"activity", title:`Elevation gain per activity (${ELEV()})`, color:"#a78bfa",
       get: a => U() === "mi" ? a.elev_ft : a.elev_m, fmt: v => f(v, 0),
       edges: () => ELEV_EDGES_FT.map(elevU) },
-    { id:"h-pace", lvl:"lap", weighted:true, title:`Lap average pace (min/${U()})`,
+    { id:"h-pace", lvl: past ? "activity" : "lap", weighted: !past, color:"#35d07f",
+      title: `${past ? "Average" : "Lap average"} pace (min/${U()})`,
       get: l => U() === "mi" ? l.pace_mi : l.pace_km, fmt: fmtPace,
       edges: () => PACE_EDGES_MI.map(paceU),
       clip: () => PACE_CLIP_MI.map(paceU), clipNote: "outside 5:00–12:00 /mi" },
-    { id:"h-hr", lvl:"lap", weighted:true, title:"Lap average heart rate (bpm)",
+    { id:"h-hr", lvl: past ? "activity" : "lap", weighted: !past, color:"#ff4d6d",
+      title: `${past ? "Average" : "Lap average"} heart rate (bpm)`,
       get: l => l.hr, fmt: v => f(v, 0), edges: () => HR_EDGES_BPM },
-    { id:"h-cad", lvl:"lap", title:"Lap average cadence (spm)", color:"#ffb020",
+    { id:"h-cad", lvl: past ? "activity" : "lap", color:"#ffb020",
+      title: `${past ? "Average" : "Lap average"} cadence (spm)`,
       get: l => l.cad != null ? l.cad * 2 : null, fmt: v => f(v, 0),
       clip: () => CADENCE_CLIP, clipNote: "outside 160–200 spm" },
   ];
@@ -883,13 +983,19 @@ const hideTip = () => tip.classList.remove("on");
    orchestration
    =================================================================== */
 function renderSheetSide() {
+  applyCycle();
+  const past = isPast();
+  $("#sec-recent").classList.toggle("hidden", past);
+  $("#lap-scope").classList.toggle("hidden", past);
+  const c = curCycle();
+  $("#stamp").textContent = past
+    ? `${c.name} · ${fmtDate(c.start, { month:"short", day:"numeric", year:"numeric" })} – ${fmtDate(c.raceDate, { month:"short", day:"numeric", year:"numeric" })}`
+    : (S.cfg.generatedAt ? "Data as of " + new Date(S.cfg.generatedAt).toLocaleString()
+                         : "Loaded " + new Date().toLocaleString());
   const rows = buildWeeks();
   renderCards(rows);
   renderWeeks(rows);
   renderHistograms();
-  $("#stamp").textContent = S.cfg.generatedAt
-    ? "Data as of " + new Date(S.cfg.generatedAt).toLocaleString()
-    : "Loaded " + new Date().toLocaleString();
 
 }
 
@@ -927,8 +1033,26 @@ async function boot(isRefresh) {
   banner(notes.map(n => `<div class="note">${n}</div>`).join(""));
 
   await loadSheet();
+  S.cycles = (await source.past()).map(c => Object.assign({}, c, {
+    acts: (c.activities || []).map(normAct).filter(a => /^\d{4}-\d\d-\d\d$/.test(a.date)),
+  }));
+  fillCycleSelect();
   renderSheetSide();
   renderLive();
+}
+
+function fillCycleSelect() {
+  const sel = $("#cycle-sel");
+  const cur = `Current · ${fmtDate(S.cfg.raceDate, { year: "numeric", month: "short", day: "numeric" })}`;
+  sel.innerHTML = `<option value="current">${esc(cur)}</option>` +
+    S.cycles.map((c, i) => `<option value="${i}">${esc(c.name)}</option>`).join("");
+  sel.value = String(S.cycle);
+  sel.classList.toggle("hidden", !S.cycles.length);
+  sel.onchange = () => {
+    S.cycle = sel.value === "current" ? "current" : +sel.value;
+    renderSheetSide();
+    if (!isPast()) renderLive();
+  };
 }
 
 boot(false);

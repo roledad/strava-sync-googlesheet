@@ -39,7 +39,7 @@ import json
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import serve_dashboard as sd
 
@@ -65,6 +65,100 @@ LAP_FIELDS = [
     "avg_pace_min_per_km", "avg_pace_min_per_mi",
     "avg_heartrate", "max_heartrate", "avg_cadence",
 ]
+
+# --------------------------------------------------------------------------
+# Past training cycles
+#
+# past_activities.json is a one-off dump of the full Strava history (2019-2025,
+# activity summaries only -- no laps). It lives at the repo root rather than in
+# public/ because it's ~6.7 MB of build input; only the trimmed, per-cycle
+# extract below is ever served.
+#
+# Boundaries are explicit rather than inferred. The goal race is taken to be
+# the longest run on the end date, and its elapsed time is the finish time.
+# --------------------------------------------------------------------------
+PAST_SOURCE = os.path.join(HERE, "past_activities.json")
+CYCLES = [
+    ("2025 Indy Marathon",              "2025-07-21", "2025-11-08"),
+    ("2025 NYC/Brooklyn Half Marathon", "2025-02-02", "2025-05-17"),
+    ("2024 Brooklyn Half Marathon",     "2024-01-01", "2024-05-18"),
+    ("2022 Twin-Cities Marathon",       "2022-05-16", "2022-10-02"),
+    ("2021 CIM Marathon",               "2021-06-21", "2021-12-05"),
+    ("2020 NYC Virtual Marathon",       "2020-08-09", "2020-10-17"),
+    ("2019 Twin-Cities Marathon",       "2019-07-29", "2019-10-06"),
+]
+
+M_PER_MI = 1609.34
+FT_PER_M = 3.28084
+
+
+def past_row(a):
+    """Reshape a raw Strava activity into the same columns the STRAVA sheet
+    tab uses, so the dashboard's existing parsing works on it untouched."""
+    local = a.get("start_date_local") or ""
+    date_part, _, time_part = local.partition("T")
+    dist = a.get("distance") or 0
+    speed = a.get("average_speed") or 0
+    elev_m = a.get("total_elevation_gain")
+    pace_km = round((1000 / speed) / 60, 2) if speed else None
+    return {
+        "activity_id": a.get("id"),
+        "date": date_part,
+        "time": time_part[:8],
+        "name": a.get("name") or "Untitled",
+        "sport_type": a.get("sport_type") or a.get("type"),
+        "distance_km": round(dist / 1000, 3),
+        "distance_mi": round(dist / M_PER_MI, 3),
+        "moving_time_min": round((a.get("moving_time") or 0) / 60, 2),
+        "elapsed_time_min": round((a.get("elapsed_time") or 0) / 60, 2),
+        "elevation_gain_m": elev_m,
+        "elevation_gain_ft": round(elev_m * FT_PER_M, 1) if elev_m is not None else None,
+        "avg_pace_min_per_km": pace_km,
+        "avg_pace_min_per_mi": round(pace_km * 1.60934, 2) if pace_km is not None else None,
+        "avg_heartrate": a.get("average_heartrate"),
+        "max_heartrate": a.get("max_heartrate"),
+        "avg_cadence": a.get("average_cadence"),
+    }
+
+
+def build_past_cycles():
+    """One entry per training cycle: the runs inside it, plus the goal race."""
+    if not os.path.exists(PAST_SOURCE):
+        print(f"  (no {os.path.basename(PAST_SOURCE)}; skipping past cycles)")
+        return []
+
+    with open(PAST_SOURCE) as f:
+        raw = json.load(f)
+    runs = [a for a in raw
+            if (a.get("sport_type") or a.get("type")) == "Run" and a.get("start_date_local")]
+
+    out = []
+    for name, start, end in CYCLES:
+        rows = [past_row(a) for a in runs if start <= a["start_date_local"][:10] <= end]
+        rows.sort(key=lambda r: (r["date"], r["time"]))
+        if not rows:
+            print(f"  ! {name}: no runs in range, skipped")
+            continue
+
+        # The goal race is the longest run on race day.
+        on_day = [r for r in rows if r["date"] == end]
+        race = max(on_day, key=lambda r: r["distance_km"]) if on_day else None
+        weeks = -(-(date.fromisoformat(end) - date.fromisoformat(start)).days // 7)
+
+        out.append({
+            "name": name, "start": start, "raceDate": end,
+            "firstWeek": max(1, weeks), "activities": rows,
+            "finish": None if not race else {
+                "distance_mi": race["distance_mi"], "distance_km": race["distance_km"],
+                "elapsed_min": race["elapsed_time_min"], "moving_min": race["moving_time_min"],
+                "name": race["name"],
+            },
+        })
+        fin = out[-1]["finish"]
+        print(f"  {name}: {len(rows)} runs, {weeks} weeks" +
+              (f", finish {fin['distance_mi']:.2f} mi in {fin['elapsed_min']:.1f} min" if fin
+               else ", NO RACE FOUND on end date"))
+    return out
 
 # Anything matching these in the output means a credential leaked into the
 # sheet somehow. Cheap insurance -- publishing is irreversible.
@@ -97,7 +191,16 @@ def main():
         "laps": laps,
     }
 
+    cycles = build_past_cycles()
+
     os.makedirs(OUT_DIR, exist_ok=True)
+    if cycles:
+        past_path = os.path.join(OUT_DIR, "past_cycles.json")
+        with open(past_path, "w") as f:
+            json.dump({"cycles": cycles}, f, separators=(",", ":"))
+        print(f"  wrote {os.path.basename(OUT_DIR)}/past_cycles.json "
+              f"({os.path.getsize(past_path)/1024:.0f} KB)")
+
     data_path = os.path.join(OUT_DIR, "data.json")
     with open(data_path, "w") as f:
         json.dump(snapshot, f, separators=(",", ":"))

@@ -290,18 +290,39 @@ function banner(html) { $("#banner").innerHTML = html; }
  * to get the same numbers. Static wins if data.json is present, so one file
  * serves both places.
  * ------------------------------------------------------------------ */
-const SRC = { mode: "server", snap: null };
+const SRC = { mode: "server", snap: null, fatal: null };
 
 async function detectMode() {
+  SRC.fatal = null;
+  let r;
   try {
-    const r = await fetch("./data.json", { cache: "no-store" });
-    if (r.ok) {
-      const j = await r.json();
-      if (j && Array.isArray(j.activities)) { SRC.mode = "static"; SRC.snap = j; return; }
-    }
-  } catch { /* fall through to server mode */ }
-  SRC.mode = "server";
-  SRC.snap = null;
+    r = await fetch("./data.json", { cache: "no-store" });
+  } catch {
+    SRC.mode = "server"; SRC.snap = null; return;   // no snapshot here; try the local API
+  }
+  if (!r.ok) { SRC.mode = "server"; SRC.snap = null; return; }
+
+  /* The file exists, so this IS a static deployment. A parse failure here is
+     a broken deployment, not a reason to quietly fall back to an API that
+     isn't there -- that fallback is what turned a corrupt snapshot into a
+     page of spinners with no error. Fail loudly instead. */
+  const text = await r.text();
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch (e) {
+    SRC.mode = "static"; SRC.snap = null;
+    SRC.fatal = /^<{7} |^>{7} /m.test(text)
+      ? "<b>data.json contains unresolved git conflict markers.</b> The snapshot is generated — re-run <code>build_static.py</code> and commit the result."
+      : `<b>data.json isn't valid JSON.</b> ${esc(e.message)}`;
+    return;
+  }
+  if (!j || !Array.isArray(j.activities)) {
+    SRC.mode = "static"; SRC.snap = null;
+    SRC.fatal = "<b>data.json is missing its <code>activities</code> array.</b> Re-run <code>build_static.py</code>.";
+    return;
+  }
+  SRC.mode = "static"; SRC.snap = j;
 }
 
 const source = {
@@ -1024,6 +1045,15 @@ function bind() {
 
 async function boot(isRefresh) {
   await detectMode();
+  if (SRC.fatal) {
+    banner(`<div class="err">${SRC.fatal}</div>`);
+    $("#wk").querySelector("tbody").innerHTML =
+      `<tr><td class="center dim">No data.</td></tr>`;
+    $("#alist").innerHTML = `<div class="panel center dim">No data.</div>`;
+    $("#hgrid").innerHTML = "";
+    $("#cards").innerHTML = "";
+    return;
+  }
   try { S.cfg = await source.config(); } catch { /* keep defaults */ }
   if (!isRefresh) bind();
 

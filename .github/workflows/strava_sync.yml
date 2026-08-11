@@ -41,6 +41,12 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python strava_to_sheets.py
 
+      # Everything under public/ is generated, so two runs producing different
+      # `generated_at` timestamps would conflict if we rebased *after* writing
+      # them. Pulling first means the rebase has nothing of ours to merge.
+      - name: Pull latest before generating
+        run: git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+
       # Rebuilds public/data.json + public/index.html by reading back the
       # sheet the step above just wrote, then commits it. Cloudflare Pages
       # watches this repo and redeploys on the push. No Strava credentials
@@ -55,6 +61,12 @@ jobs:
         run: python build_static.py
 
       - name: Publish snapshot
+        env:
+          # needed only by the rebuild-on-race fallback below
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          RACE_DATE: ${{ vars.RACE_DATE }}
+          FIRST_WEEK: ${{ vars.FIRST_WEEK }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -63,8 +75,17 @@ jobs:
             echo "No dashboard changes to publish."
           else
             git commit -m "Update dashboard snapshot"
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            # public/ is generated, so on a race just rebuild on top of remote
+            # rather than trying to merge two snapshots line by line.
+            git push origin "HEAD:${GITHUB_REF_NAME}" || {
+              git fetch origin "${GITHUB_REF_NAME}"
+              git checkout FETCH_HEAD -- . 2>/dev/null || true
+              git reset --soft FETCH_HEAD
+              python build_static.py
+              git add public/
+              git commit -m "Update dashboard snapshot"
+              git push origin "HEAD:${GITHUB_REF_NAME}"
+            }
           fi
 
   whoop-sync:

@@ -290,18 +290,39 @@ function banner(html) { $("#banner").innerHTML = html; }
  * to get the same numbers. Static wins if data.json is present, so one file
  * serves both places.
  * ------------------------------------------------------------------ */
-const SRC = { mode: "server", snap: null };
+const SRC = { mode: "server", snap: null, fatal: null };
 
 async function detectMode() {
+  SRC.fatal = null;
+  let r;
   try {
-    const r = await fetch("./data.json", { cache: "no-store" });
-    if (r.ok) {
-      const j = await r.json();
-      if (j && Array.isArray(j.activities)) { SRC.mode = "static"; SRC.snap = j; return; }
-    }
-  } catch { /* fall through to server mode */ }
-  SRC.mode = "server";
-  SRC.snap = null;
+    r = await fetch("./data.json", { cache: "no-store" });
+  } catch {
+    SRC.mode = "server"; SRC.snap = null; return;   // no snapshot here; try the local API
+  }
+  if (!r.ok) { SRC.mode = "server"; SRC.snap = null; return; }
+
+  /* The file exists, so this IS a static deployment. A parse failure here is
+     a broken deployment, not a reason to quietly fall back to an API that
+     isn't there -- that fallback is what turned a corrupt snapshot into a
+     page of spinners with no error. Fail loudly instead. */
+  const text = await r.text();
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch (e) {
+    SRC.mode = "static"; SRC.snap = null;
+    SRC.fatal = /^<{7} |^>{7} /m.test(text)
+      ? "<b>data.json contains unresolved git conflict markers.</b> The snapshot is generated — re-run <code>build_static.py</code> and commit the result."
+      : `<b>data.json isn't valid JSON.</b> ${esc(e.message)}`;
+    return;
+  }
+  if (!j || !Array.isArray(j.activities)) {
+    SRC.mode = "static"; SRC.snap = null;
+    SRC.fatal = "<b>data.json is missing its <code>activities</code> array.</b> Re-run <code>build_static.py</code>.";
+    return;
+  }
+  SRC.mode = "static"; SRC.snap = j;
 }
 
 const source = {
@@ -384,7 +405,6 @@ function mergeSameDay(rows) {
     e.dist_mi = add(e.dist_mi, a.dist_mi);   e.dist_km = add(e.dist_km, a.dist_km);
     e.moving  = add(e.moving,  a.moving);    e.elapsed = add(e.elapsed, a.elapsed);
     e.elev_ft = add(e.elev_ft, a.elev_ft);   e.elev_m  = add(e.elev_m,  a.elev_m);
-<<<<<<< HEAD
     // Rates can't be summed. Pace comes back out of the combined totals, and
     // HR/cadence are averaged weighted by how long each run lasted -- summing
     // them would report a 2-hour day as running at 300 bpm.
@@ -407,12 +427,6 @@ function wAvg(acc, next, get) {
   const bw = next.moving || 0, aw = Math.max(0, (acc.moving || 0) - bw);
   return aw + bw ? (av * aw + bv * bw) / (aw + bw) : av;
 }
-=======
-    e.merged  = (e.merged || 1) + 1;
-  }
-  return [...byDay.values()];
-}
->>>>>>> 77ad9b3218036c7612beca90944721213bcf8742
 const aDist = a => U() === "mi" ? a.dist_mi : a.dist_km;
 const aElev = a => U() === "mi" ? a.elev_ft : a.elev_m;
 const paceOf = a => U() === "mi" ? a.pace_mi : a.pace_km;
@@ -443,11 +457,7 @@ function buildWeeks() {
     const sK = iso(start), eK = iso(addDays(start, 6));
     const inWeek = acts.filter(a => a.date >= sK && a.date <= eK);
     rows.push({
-<<<<<<< HEAD
       n, start: sK, end: eK,
-=======
-      n, start: sK, end: n === 0 ? null : eK,
->>>>>>> 77ad9b3218036c7612beca90944721213bcf8742
       // Same-day runs count as one session, matching the distribution plots.
       count: new Set(inWeek.map(a => a.date)).size,
       moving: inWeek.reduce((s, a) => s + (a.moving || 0), 0),
@@ -715,12 +725,9 @@ function renderHistograms() {
   // Per-activity plots merge same-day runs; lap plots use runs' laps only.
   const A = mergeSameDay(inScope(selActs()));
   const L = inScope(S.laps.filter(l => runIds.has(l.id)));
-<<<<<<< HEAD
   // History is activity summaries only -- no laps exist -- so pace, heart
   // rate and cadence fall back to the same per-activity treatment.
   const past = isPast();
-=======
->>>>>>> 77ad9b3218036c7612beca90944721213bcf8742
 
   const specs = [
     { id:"h-dist", lvl:"activity", title:`Distance per activity (${U()})`, color:"#fc5200",
@@ -733,7 +740,6 @@ function renderHistograms() {
     { id:"h-elev", lvl:"activity", title:`Elevation gain per activity (${ELEV()})`, color:"#a78bfa",
       get: a => U() === "mi" ? a.elev_ft : a.elev_m, fmt: v => f(v, 0),
       edges: () => ELEV_EDGES_FT.map(elevU) },
-<<<<<<< HEAD
     { id:"h-pace", lvl: past ? "activity" : "lap", weighted: !past, color:"#35d07f",
       title: `${past ? "Average" : "Lap average"} pace (min/${U()})`,
       get: l => U() === "mi" ? l.pace_mi : l.pace_km, fmt: fmtPace,
@@ -744,15 +750,6 @@ function renderHistograms() {
       get: l => l.hr, fmt: v => f(v, 0), edges: () => HR_EDGES_BPM },
     { id:"h-cad", lvl: past ? "activity" : "lap", color:"#ffb020",
       title: `${past ? "Average" : "Lap average"} cadence (spm)`,
-=======
-    { id:"h-pace", lvl:"lap", weighted:true, title:`Lap average pace (min/${U()})`,
-      get: l => U() === "mi" ? l.pace_mi : l.pace_km, fmt: fmtPace,
-      edges: () => PACE_EDGES_MI.map(paceU),
-      clip: () => PACE_CLIP_MI.map(paceU), clipNote: "outside 5:00–12:00 /mi" },
-    { id:"h-hr", lvl:"lap", weighted:true, title:"Lap average heart rate (bpm)",
-      get: l => l.hr, fmt: v => f(v, 0), edges: () => HR_EDGES_BPM },
-    { id:"h-cad", lvl:"lap", title:"Lap average cadence (spm)", color:"#ffb020",
->>>>>>> 77ad9b3218036c7612beca90944721213bcf8742
       get: l => l.cad != null ? l.cad * 2 : null, fmt: v => f(v, 0),
       clip: () => CADENCE_CLIP, clipNote: "outside 160–200 spm" },
   ];
@@ -1020,12 +1017,6 @@ function renderSheetSide() {
   renderCards(rows);
   renderWeeks(rows);
   renderHistograms();
-<<<<<<< HEAD
-=======
-  $("#stamp").textContent = S.cfg.generatedAt
-    ? "Data as of " + new Date(S.cfg.generatedAt).toLocaleString()
-    : "Loaded " + new Date().toLocaleString();
->>>>>>> 77ad9b3218036c7612beca90944721213bcf8742
 
 }
 
@@ -1054,6 +1045,15 @@ function bind() {
 
 async function boot(isRefresh) {
   await detectMode();
+  if (SRC.fatal) {
+    banner(`<div class="err">${SRC.fatal}</div>`);
+    $("#wk").querySelector("tbody").innerHTML =
+      `<tr><td class="center dim">No data.</td></tr>`;
+    $("#alist").innerHTML = `<div class="panel center dim">No data.</div>`;
+    $("#hgrid").innerHTML = "";
+    $("#cards").innerHTML = "";
+    return;
+  }
   try { S.cfg = await source.config(); } catch { /* keep defaults */ }
   if (!isRefresh) bind();
 

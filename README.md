@@ -492,6 +492,16 @@ written to it. If you later want it private, put Cloudflare Access in front
 of the Pages project.
 
 ## Troubleshooting
+- **Dashboard shows only spinners** — `public/data.json` is not valid JSON.
+  The usual cause is unresolved git conflict markers: `public/` is generated,
+  and two builds producing different `generated_at` timestamps used to
+  conflict on rebase. The page now detects this and says so explicitly. Fix
+  by re-running `python build_static.py` and committing; the workflow pulls
+  before generating so it shouldn't recur.
+- **Cycle dropdown is missing** — `past_activities.json` isn't at the repo
+  root, so `build_static.py` skipped past cycles and wrote an empty
+  `past_cycles.json`. It must be committed for CI to see it.
+
 - **`403: Drive storage quota exceeded`** — you're missing the "share the
   sheet with the service account" step; the service account can't create its
   own sheet, it needs to be shared one

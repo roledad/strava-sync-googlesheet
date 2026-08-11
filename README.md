@@ -305,17 +305,21 @@ than omitting it.
 
 ### How the week math works
 
-Weeks count **down** to `RACE_DATE`, so week 0 is race day and week N starts
-`7N` days before it. Matching the reference layout, the two halves of the
-table use different week boundaries on purpose:
+Week boundaries depend on the cycle:
 
-- the cumulative columns cover **Sunday → Saturday** (`start` … `start+6`),
-  which is the range shown in the Start/End Date columns
-- the day grid covers **Monday → Sunday** (`start+1` … `start+7`)
+- the **current** cycle runs **Sunday → Saturday** (NYCM is a Sunday race and
+  that's how the log is kept), so week 15 starts 2026-07-19
+- **past** cycles run **Monday → Sunday**
 
-So a week's Sunday mileage appears in the *previous* row's grid, and the grid
-row will not sum to that row's Cum Distance. (Verified against the reference
-sheet: week 14 = Sun 7/26's 15.1 + Mon–Sat's 33.4 = 48.50.)
+Either way both halves of the table use the same range — the Start/End Date
+columns and the day grid describe identical days, and the grid headers follow
+the anchor (Sun–Sat or Mon–Sun). So a grid row sums to its own Cum Distance,
+up to display rounding: each cell shows one decimal, so seven cells can drift
+up to 0.35 from the 2-decimal total.
+
+Week 0 is the Mon–Sun week **containing** race day, and week N starts 7N days
+earlier. Week 0 is a normal row with real totals — it holds the taper and the
+race — marked `0 🏁` with the race day cell outlined in the grid.
 
 `FIRST_WEEK` (default 15) is where the block starts. Weeks earlier than
 that are dropped from the table *and* from the summary cards, since a
@@ -356,6 +360,51 @@ in local time picks up a 25-hour day and shifts every week number by one.
 - **Nothing is written.** The server only issues GETs; it can't modify your
   sheet or your Strava data. The service account is requested with read-only
   scopes.
+
+## Past training cycles
+
+The cycle selector at the top switches between the current build (from the
+Google Sheet) and previous ones (from `past_activities.json`, a one-off dump
+of the full Strava history, 2019-2025).
+
+That dump lives at the **repo root, not in `public/`** — it's ~6.7 MB of build
+input and there's no reason to serve it. `build_static.py` reshapes it into
+`public/past_cycles.json` (~230 KB): only the runs inside each cycle, with
+raw Strava fields renamed to the same columns the `STRAVA` tab uses, so the
+dashboard parses both sources with identical code.
+
+Cycle boundaries are explicit, in `CYCLES` at the top of `build_static.py`:
+
+```python
+CYCLES = [
+    ("2025 Indy Marathon", "2025-07-21", "2025-11-08"),
+    ...
+]
+```
+
+The goal race is the longest run on the end date, and the **elapsed** time of
+that run is the finish time (matching how the activities are named, e.g.
+`Indy Marathon - 3:34` has elapsed 3:33:59).
+
+### What differs in a past-cycle view
+
+- **Cards** become retrospective: average distance, moving time and elevation
+  *per week*, peak week distance, and final finish time. Averages cover
+  training weeks only — race day is week 0 and is excluded, so the numbers
+  describe the build rather than being inflated by the race itself.
+- **Recent activities** is hidden, and the distribution scope selector too —
+  a finished cycle has no "last 30 days".
+- **All six distribution plots are per-activity.** The history dump has no
+  lap data, so pace, heart rate and cadence use activity averages and revert
+  from the distance/time-weighted view to plain counts.
+- **Averages and peak week exclude week 0**, the race week, so they describe
+  the build rather than being inflated by race day.
+- **Weeks run Monday → Sunday**, unlike the current cycle's Sunday → Saturday.
+
+Same-day runs merge into one session for the per-activity plots. Distance,
+time and elevation sum; pace is recomputed from the combined totals and
+heart rate and cadence are averaged weighted by moving time, since rates
+can't be added.
 
 ## Publishing the dashboard (Cloudflare Pages + Bear Blog)
 

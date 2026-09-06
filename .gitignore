@@ -4,3 +4,4 @@ __pycache__/
 .env
 .DS_Store
 public_demo/
+.env.intervals

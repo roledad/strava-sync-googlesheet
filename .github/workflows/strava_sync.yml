@@ -1,4 +1,4 @@
-name: Strava to Google Sheets Sync
+name: Activity Sync to Google Sheets
 
 on:
   schedule:
@@ -13,11 +13,11 @@ on:
 # Only one run at a time, so the two scheduled triggers can never race each
 # other while committing the dashboard snapshot.
 concurrency:
-  group: strava-sync
+  group: activity-sync
   cancel-in-progress: false
 
 jobs:
-  strava-sync:
+  intervals-sync:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # needed to commit public/ back to the repo
@@ -31,15 +31,19 @@ jobs:
       - name: Install dependencies
         run: pip install requests gspread google-auth
 
+      # Reads activity data from interval.icu instead of Strava's API --
+      # Strava now requires a paid subscription just to use its API (June
+      # 2026 developer agreement change). interval.icu's API is free and
+      # uses a simple API key. See intervals_to_sheets.py's module docstring
+      # for the important caveat about Strava-sourced activities inside
+      # interval.icu not being readable via its API.
       - name: Run sync
         env:
-          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
-          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
-          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python strava_to_sheets.py
+        run: python intervals_to_sheets.py
 
       # Everything under public/ is generated, so two runs producing different
       # `generated_at` timestamps would conflict if we rebased *after* writing
@@ -49,9 +53,9 @@ jobs:
 
       # Rebuilds public/data.json + public/index.html by reading back the
       # sheet the step above just wrote, then commits it. Cloudflare Pages
-      # watches this repo and redeploys on the push. No Strava credentials
-      # here on purpose -- everything the dashboard shows is already in the
-      # sheet, so this step only needs read access to Google.
+      # watches this repo and redeploys on the push. No interval.icu
+      # credentials here on purpose -- everything the dashboard shows is
+      # already in the sheet, so this step only needs read access to Google.
       - name: Build static dashboard snapshot
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}

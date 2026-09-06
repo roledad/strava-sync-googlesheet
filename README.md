@@ -1,51 +1,77 @@
-# Strava + WHOOP → Google Sheets Daily Sync
+# interval.icu + WHOOP → Google Sheets Daily Sync
 
-Pulls your Strava activities and WHOOP daily stats and appends them as rows
-in a shared Google Sheet — Strava into a "STRAVA" tab, per-lap detail for Run
-activities into a "Details" tab, and WHOOP into a "WHOOP" tab.
+Pulls your running/training activities (via interval.icu) and WHOOP daily
+stats and appends them as rows in a shared Google Sheet — activities into a
+"STRAVA" tab (name kept for continuity with existing sheet history and the
+dashboard), per-lap detail for Run activities into a "Details" tab, and
+WHOOP into a "WHOOP" tab.
+
+> **Why interval.icu instead of Strava's API directly?** As of June 2026,
+> Strava requires an active paid Strava subscription just to use its API at
+> all. `intervals_to_sheets.py` instead reads the same activity data from
+> interval.icu (free, simple API key, no OAuth) — see "interval.icu setup"
+> below for the one important catch: interval.icu will not hand back data
+> for any activity that only reached it *via* a connected Strava account.
+> The legacy `strava_to_sheets.py` / `get_strava_tokens.py` scripts are still
+> here, untouched, in case you ever do want to pay for direct Strava API
+> access instead.
 
 ## How it runs
 
 This runs on **GitHub Actions**, not locally or in Cowork — Cowork's sandbox
-blocks outbound calls to Google's, Strava's, and WHOOP's APIs, so a Cowork
-scheduled task can't do this. GitHub Actions has normal internet access and
-a free daily-cron tier.
+blocks outbound calls to Google's, interval.icu's, and WHOOP's APIs, so a
+Cowork scheduled task can't do this. GitHub Actions has normal internet
+access and a free daily-cron tier.
 
-- `strava_to_sheets.py` / `whoop_to_sheets.py` — the two sync scripts
-- `get_strava_tokens.py` / `get_whoop_tokens.py` — one-time local helpers to
-  get each service's refresh token
+- `intervals_to_sheets.py` / `whoop_to_sheets.py` — the two sync scripts
+- `get_whoop_tokens.py` — one-time local helper to get WHOOP's refresh token
+  (interval.icu just needs an API key copied from its settings page — no
+  script needed, see below)
 - `dashboard.html` / `serve_dashboard.py` / `build_static.py` — the training
   dashboard, its local server, and the static-site builder (see "Training
   dashboard" and "Publishing the dashboard" below)
 - `.github/workflows/strava_sync.yml` — one workflow, two independent jobs
-  (`strava-sync`, `whoop-sync`), same daily schedule (fires at 10pm and 8am
-  New York time year-round; see the comments in that file for how it handles
-  the EST/EDT switch)
+  (`intervals-sync`, `whoop-sync`), same daily schedule (fires at 10pm and
+  8am New York time year-round; see the comments in that file for how it
+  handles the EST/EDT switch)
 
 Both scripts share the same Google Sheet (`GOOGLE_SHEET_ID`), the same
 service account (`GOOGLE_SERVICE_ACCOUNT_JSON`), and the same optional Slack
-webhook (`SLACK_WEBHOOK_URL`) — you only set those up once, in the Strava
-setup below.
+webhook (`SLACK_WEBHOOK_URL`) — you only set those up once, in the
+interval.icu setup below.
 
 ---
 
-## Part 1: Strava setup (~15 minutes)
+## Part 1: interval.icu setup (~10 minutes)
 
-### 1. Create a Strava API application
-- Go to https://www.strava.com/settings/api
-- Fill in any app name/website, set **Authorization Callback Domain** to `localhost`
-- Note the **Client ID** and **Client Secret** shown
+### 1. Connect your recording device to interval.icu directly
 
-### 2. Get a Strava refresh token
-Run locally on your machine (not in Cowork — this needs a browser):
-```
-pip install requests
-python get_strava_tokens.py <client_id> <client_secret>
-```
-- It opens a Strava authorization page in your browser — click Authorize
-- You'll land on a "can't connect to localhost" error page — that's expected.
-  Copy the `code=...` value from that page's URL and paste it back into the terminal
-- It prints `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN` — save these
+This is the step that matters most. interval.icu will only return full
+activity data (distance, pace, heart rate, laps, etc.) through its API for
+activities that reached it **directly** from your device/platform — not for
+activities it only has because a connected Strava account fed them in. For
+those, the API returns a stub: `{id, start_date_local, source: "STRAVA",
+"_note": "STRAVA activities are not available via the API"}`. This is
+interval.icu complying with Strava's API terms, not a bug, and there's no
+way around it from the sync script's side.
+
+The fix: go to **https://intervals.icu/settings → Connections tab** and
+connect your watch/platform there (Coros, Garmin, Wahoo, Suunto, etc. are
+all supported — most have a native direct integration; check the
+"Connections" list). You can leave your existing Strava connection in place
+too — it doesn't need to be removed, the direct connection just means *new*
+activities also arrive through a path interval.icu is allowed to expose via
+its API.
+
+This only affects activities recorded **after** you connect — it doesn't
+retroactively unlock older activities that are already stored in
+interval.icu tagged `source: STRAVA`.
+
+### 2. Get your interval.icu API key
+- Go to https://intervals.icu/settings, scroll to the bottom to
+  **Developer Settings**, and copy your **API Key**
+- That's it — no OAuth flow, no app registration. The key doesn't expire
+  unless you regenerate it
 
 ### 3. Create a Google Cloud service account
 - Google Cloud Console → enable the Sheets API and Drive API for a project
@@ -84,9 +110,7 @@ sends anything if `SLACK_WEBHOOK_URL` isn't set.
 - Push everything in this folder to it (the workflow file must stay at the
   repo root under `.github/workflows/`)
 - Settings → Secrets and variables → Actions → New repository secret. Add:
-  - `STRAVA_CLIENT_ID`
-  - `STRAVA_CLIENT_SECRET`
-  - `STRAVA_REFRESH_TOKEN`
+  - `INTERVALS_API_KEY`
   - `GOOGLE_SERVICE_ACCOUNT_JSON` — the entire contents of `service_account.json`, as one blob
   - `GOOGLE_SHEET_ID` — the sheet ID from step 4
   - `SLACK_WEBHOOK_URL` — (optional) the webhook URL from step 5
@@ -95,14 +119,15 @@ sends anything if `SLACK_WEBHOOK_URL` isn't set.
 Run once locally to confirm everything's wired up correctly:
 ```
 pip install requests gspread google-auth
-export STRAVA_CLIENT_ID=...
-export STRAVA_CLIENT_SECRET=...
-export STRAVA_REFRESH_TOKEN=...
+export INTERVALS_API_KEY=...
 export GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service_account.json)"
 export GOOGLE_SHEET_ID=<the ID from step 4>
-python strava_to_sheets.py
+python intervals_to_sheets.py
 ```
-This writes the header row and does the first sync.
+This writes the header row and does the first sync. If it logs a line about
+skipping Strava-sourced activities, that's expected for anything recorded
+before you completed step 1 above — it'll stop once your device is
+connected directly and new activities start flowing in.
 
 ---
 
@@ -151,7 +176,7 @@ python whoop_to_sheets.py
 This creates the "WHOOP" tab and the `_whoop_token_state` tab, writes headers,
 and does the first sync.
 
-Then in the GitHub repo → Actions tab → "Strava to Google Sheets Sync" →
+Then in the GitHub repo → Actions tab → "Activity Sync to Google Sheets" →
 "Run workflow" to confirm both jobs run clean end to end. After that, both
 run automatically on the same daily schedule.
 
@@ -159,13 +184,17 @@ run automatically on the same daily schedule.
 
 ## How it works day to day
 
-**Strava** (`strava_to_sheets.py`):
-- Mints a fresh access token from the refresh token (Strava's refresh tokens don't expire)
-- Pulls activities from the last 3 days (`LOOKBACK_DAYS`), dedupes against the
-  existing `activity_id` column, fetches full detail + gear for new ones
-- For any newly-synced activity with `sport_type` exactly `"Run"`, also fetches
-  `GET /activities/{id}/laps` and writes one row per lap to the "Running
-  details" tab, keyed by `activity_id` and `date`. Laps only get fetched the
+**interval.icu** (`intervals_to_sheets.py`):
+- Pulls activities from the last 7 days (`LOOKBACK_DAYS`) from interval.icu's
+  `/athlete/0/activities` endpoint using the API key — no OAuth, no separate
+  detail call needed (interval.icu returns full activity objects directly)
+- Dedupes against the existing `activity_id` column
+- Skips any activity whose `source` is `"STRAVA"` — interval.icu doesn't
+  expose data for those via its API (see "interval.icu setup" above). The
+  skip count is logged so you can see it happening
+- For any newly-synced activity with `type` exactly `"Run"`, also fetches
+  `GET /activity/{id}/intervals` and writes one row per interval to the
+  "Details" tab, keyed by `activity_id` and `date`. Laps only get fetched the
   first time an activity is synced (they ride along with the same
   new-activity dedup as the main tab), so there's no separate dedup logic
   needed here
@@ -246,23 +275,24 @@ Miles/kilometers toggle applies everywhere. Preferences persist per browser.
 
 ### Everything comes from the sheet
 
-The dashboard never calls the Strava API. `strava_to_sheets.py` has already
-written every field it needs into the two tabs, so re-fetching from Strava
-would be a slower way to get identical numbers — and would spend rate limit
-on every page load or build. One consequence worth knowing: the dashboard is
+The dashboard never calls the interval.icu API. `intervals_to_sheets.py` has
+already written every field it needs into the two tabs, so re-fetching would
+be a slower way to get identical numbers — and would spend API calls on
+every page load or build. One consequence worth knowing: the dashboard is
 exactly as fresh as the last sync, so an activity uploaded an hour ago won't
-appear until the next run (or until you run `strava_to_sheets.py` yourself).
+appear until the next run (or until you run `intervals_to_sheets.py`
+yourself).
 
-Three fields exist only in the API and so aren't shown: `kudos_count`,
-`achievement_count` and `max_speed`. If you ever want them, add the columns
-to `HEADER` in `strava_to_sheets.py` and they'll flow through.
+If you ever want additional interval.icu fields shown (e.g. `icu_ctl`,
+`icu_atl`, weather data), add the columns to `HEADER` in
+`intervals_to_sheets.py` and they'll flow through.
 
 ### Why there's a server
 
 A plain HTML file opened from disk can't read the sheet — that needs the
 service account. `serve_dashboard.py` holds that one credential, binds to
 `127.0.0.1` only, and exposes a small read-only JSON API to the page. It
-needs no Strava credentials at all.
+needs no interval.icu credentials at all.
 
 ### Setup
 
@@ -281,8 +311,8 @@ FIRST_WEEK=15
 Google credentials fall back to the `service_account.json` already in this
 folder, so `GOOGLE_SERVICE_ACCOUNT_JSON` is only needed if you keep the key
 elsewhere. Plain environment variables work too, if you'd rather not have a
-`.env`. No `STRAVA_*` values are needed here — those belong to the sync
-scripts, not the dashboard.
+`.env`. No `INTERVALS_API_KEY` is needed here — that belongs to the sync
+script, not the dashboard.
 
 Then:
 
@@ -332,11 +362,11 @@ in local time picks up a 25-hour day and shifts every week number by one.
 
 ### Notes
 
-- **No Strava rate limit exposure.** The dashboard reads only the sheet, and
-  that read is cached for 120s. Strava is called exactly once per sync run,
-  by `strava_to_sheets.py`.
-- **Cadence is doubled** to steps-per-minute everywhere, since Strava reports
-  per-leg cadence for runs.
+- **No interval.icu rate limit exposure.** The dashboard reads only the
+  sheet, and that read is cached for 120s. interval.icu is called once per
+  activity per sync run, by `intervals_to_sheets.py`.
+- **Cadence is doubled** to steps-per-minute everywhere, since interval.icu
+  (like Strava before it) reports per-leg cadence for runs.
 - **Fixed histogram buckets**, all declared as constants at the top of the
   `renderHistograms` block in `dashboard.html`:
 
@@ -358,8 +388,8 @@ in local time picks up a 25-hour day and shifts every week number by one.
 - **"Runs only" vs "All activities"** changes what feeds the weekly summary
   and the histograms; the recent-activity list always shows everything.
 - **Nothing is written.** The server only issues GETs; it can't modify your
-  sheet or your Strava data. The service account is requested with read-only
-  scopes.
+  sheet or your interval.icu data. The service account is requested with
+  read-only scopes.
 
 ## Past training cycles
 
@@ -439,7 +469,7 @@ python build_static.py          # or --demo to try it with no credentials
 Writes `public/index.html`, `public/data.json` and `public/_headers`.
 
 The snapshot is just the two sheet tabs, trimmed to the columns the dashboard
-renders (`ACT_FIELDS` / `LAP_FIELDS` at the top of the file). No Strava calls
+renders (`ACT_FIELDS` / `LAP_FIELDS` at the top of the file). No API calls
 are made — the sync step immediately before has already put everything in the
 sheet. The build aborts rather than publish if the STRAVA tab comes back
 empty, or if a credential-shaped string ever appears in the output.
@@ -473,7 +503,7 @@ the internal `/about-me/` style links you already have.
 
 ### Keeping it fresh
 
-The `strava-sync` job in `.github/workflows/strava_sync.yml` runs
+The `intervals-sync` job in `.github/workflows/strava_sync.yml` runs
 `build_static.py` immediately after the sheet sync — reading back the rows
 that step just wrote — and commits `public/` to the repo. Cloudflare Pages
 watches the repo and redeploys on that push, so the site updates on the same
@@ -481,7 +511,7 @@ twice-daily schedule as the sheet. That ordering is what makes the sheet-only
 approach lossless: the snapshot is built from a sheet that is current as of
 seconds earlier.
 
-The build step is given **no Strava secrets**, only Google read access.
+The build step is given **no interval.icu secrets**, only Google read access.
 `RACE_DATE` and `FIRST_WEEK` come from repository **variables** (Settings →
 Secrets and variables → Actions → Variables), and fall back to their defaults
 if unset.
